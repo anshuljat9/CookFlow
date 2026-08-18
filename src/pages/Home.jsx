@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, ChefHat, Zap, Search, Truck, Heart, Sparkles, Clock, Loader2 } from 'lucide-react';
-import { getPopularRecipes, getQuickRecipes, getTrendingRecipes } from '../data/recipes';
-import { cuisines } from '../data/categories';
+import { usePopularRecipes, useQuickRecipes, useTrendingRecipes } from '../hooks/useRecipes';
+import { categoryService } from '../services/categoryService';
+import { useState, useEffect } from 'react';
 import RecipeCard from '../components/RecipeCard';
+import RecipeCardSkeleton from '../components/RecipeCardSkeleton';
 import Button from '../components/Button';
 import SearchBar from '../components/SearchBar';
 import LoadingState from '../components/LoadingState';
@@ -36,11 +38,24 @@ const features = [
 ];
 
 export default function Home() {
-  const popularRecipes = getPopularRecipes();
-  const quickRecipes = getQuickRecipes();
-  const trendingRecipes = getTrendingRecipes();
+  const [cuisines, setCuisines] = useState([]);
+  const { recipes: popularRecipes, loading: popularLoading, error: popularError } = usePopularRecipes(8);
+  const { recipes: quickRecipes, loading: quickLoading, error: quickError } = useQuickRecipes(8, 30);
+  const { recipes: trendingRecipes, loading: trendingLoading, error: trendingError } = useTrendingRecipes(8);
 
-  const renderSection = (title, recipes, linkText, linkPath, icon) => (
+  useEffect(() => {
+    const fetchCuisines = async () => {
+      try {
+        const data = await categoryService.getCuisines();
+        setCuisines(data);
+      } catch (err) {
+        console.error('Failed to load cuisines:', err);
+      }
+    };
+    fetchCuisines();
+  }, []);
+
+  const renderSection = (title, recipes, loading, error, linkText, linkPath, icon) => (
     <section className="py-12 sm:py-16" aria-labelledby={title.toLowerCase().replace(/\s+/g, '-')}>
       <div className="container-custom">
         <div className="flex items-center justify-between mb-8">
@@ -53,14 +68,27 @@ export default function Home() {
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>
-        {recipes.length > 0 ? (
+        {error ? (
+          <div className="card p-8 text-center" role="alert">
+            <p className="text-charcoal-500 dark:text-charcoal-400 mb-4">Unable to load {title.toLowerCase()}</p>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              Try Again
+            </Button>
+          </div>
+        ) : loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6" aria-busy="true" aria-label={`Loading ${title}`}>
+            {[...Array(4)].map((_, i) => <RecipeCardSkeleton key={i} />)}
+          </div>
+        ) : recipes.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {recipes.map(recipe => (
               <RecipeCard key={recipe.id} recipe={recipe} />
             ))}
           </div>
         ) : (
-          <LoadingState variant="card" size="lg" />
+          <div className="card p-8 text-center">
+            <p className="text-charcoal-500 dark:text-charcoal-400">No recipes found</p>
+          </div>
         )}
         <Link to={linkPath} className="sm:hidden mt-6 inline-flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
           {linkText}
@@ -113,7 +141,7 @@ export default function Home() {
                 className="w-full"
               />
               <p className="mt-3 text-sm text-charcoal-500 dark:text-charcoal-400">
-                Search 10,000+ recipes by ingredient, cuisine, or dish name
+                Search recipes by ingredient, cuisine, or dish name
               </p>
             </div>
           </div>
@@ -139,12 +167,11 @@ export default function Home() {
               </div>
             ))}
           </div>
-        </div>
-      </section>
+        </div      </section>
 
-      {renderSection('Popular Recipes', popularRecipes, 'View all popular', '/explore?sort=popular', Heart)}
-      {renderSection('Quick & Easy', quickRecipes, 'View all quick', '/explore?time=under-30', Zap)}
-      {renderSection('Trending Now', trendingRecipes, 'View trending', '/explore?sort=trending', Sparkles)}
+      {renderSection('Popular Recipes', popularRecipes, popularLoading, popularError, 'View all popular', '/explore?sort=popular', Heart)}
+      {renderSection('Quick & Easy', quickRecipes, quickLoading, quickError, 'View all quick', '/explore?time=under-30', Zap)}
+      {renderSection('Trending Now', trendingRecipes, trendingLoading, trendingError, 'View trending', '/explore?sort=trending', Sparkles)}
 
       <section className="py-12 sm:py-16 bg-warm-50 dark:bg-charcoal-900" aria-labelledby="cuisines-heading">
         <div className="container-custom">
@@ -153,17 +180,26 @@ export default function Home() {
             <p className="section-subtitle">Travel the world from your kitchen</p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-            {cuisines.map(cuisine => (
-              <Link 
-                key={cuisine.id} 
-                to={`/explore?cuisine=${cuisine.id}`}
-                className="card-interactive aspect-square relative overflow-hidden p-6 flex flex-col items-center justify-center text-center group"
-              >
-                <span className="text-4xl sm:text-5xl mb-3 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{cuisine.icon}</span>
-                <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">{cuisine.name}</h3>
-                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              </Link>
-            ))}
+            {cuisines.length > 0 ? (
+              cuisines.map(cuisine => (
+                <Link 
+                  key={cuisine.id} 
+                  to={`/explore?cuisine=${cuisine.id}`}
+                  className="card-interactive aspect-square relative overflow-hidden p-6 flex flex-col items-center justify-center text-center group"
+                >
+                  <span className="text-4xl sm:text-5xl mb-3 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{cuisine.icon}</span>
+                  <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">{cuisine.name}</h3>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                </Link>
+              ))
+            ) : (
+              [...Array(10)].map((_, i) => (
+                <div key={i} className="card-interactive aspect-square relative overflow-hidden p-6 flex flex-col items-center justify-center text-center animate-pulse">
+                  <div className="text-4xl sm:text-5xl mb-3" aria-hidden="true">🍳</div>
+                  <div className="h-6 w-24 bg-warm-200 dark:bg-charcoal-700 rounded" />
+                </div>
+              ))
+            )}
           </div>
         </div>
       </section>

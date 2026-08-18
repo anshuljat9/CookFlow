@@ -1,13 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Filter, X, ChevronDown, Grid, List, Loader2 } from 'lucide-react';
-import { recipes, getRecipesByCuisine, getRecipesByCategory, searchRecipes } from '../data/recipes';
-import { cuisines, categories, difficulties, cookingTimes } from '../data/categories';
+import { Filter, X, ChevronDown, Grid, List, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { useRecipes } from '../hooks/useRecipes';
+import { categoryService } from '../services/categoryService';
 import RecipeCard from '../components/RecipeCard';
+import RecipeCardSkeleton from '../components/RecipeCardSkeleton';
 import CategoryChip from '../components/CategoryChip';
 import Button from '../components/Button';
 import SearchBar from '../components/SearchBar';
-import LoadingState from '../components/LoadingState';
 import EmptyState from '../components/EmptyState';
 
 const initialFilters = {
@@ -24,52 +24,27 @@ export default function Explore() {
   const [filters, setFilters] = useState(initialFilters);
   const [viewMode, setViewMode] = useState('grid');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
-  const [activeFilterTab, setActiveFilterTab] = useState('all');
+  const [cuisines, setCuisines] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [difficulties, setDifficulties] = useState([]);
+  const [cookingTimes] = useState([
+    { id: 'under-15', name: 'Under 15 min', value: 15 },
+    { id: '15-30', name: '15-30 min', value: 30 },
+    { id: '30-60', name: '30-60 min', value: 60 },
+    { id: 'over-60', name: 'Over 60 min', value: 120 },
+  ]);
 
-  const filteredRecipes = useMemo(() => {
-    let result = [...recipes];
+  const {
+    recipes,
+    loading,
+    error,
+    pagination,
+    refetch,
+    loadMore,
+    hasMore,
+  } = useRecipes(filters);
 
-    if (filters.search) {
-      result = searchRecipes(filters.search);
-    }
-    if (filters.cuisine) {
-      result = result.filter(r => r.cuisine === filters.cuisine);
-    }
-    if (filters.category) {
-      result = result.filter(r => r.category === filters.category);
-    }
-    if (filters.vegetarian) {
-      result = result.filter(r => r.tags?.includes('vegetarian'));
-    }
-    if (filters.cookingTime) {
-      const maxTime = cookingTimes.find(t => t.id === filters.cookingTime)?.value || 120;
-      result = result.filter(r => r.cookingTime <= maxTime);
-    }
-    if (filters.difficulty) {
-      result = result.filter(r => r.difficulty === filters.difficulty);
-    }
-
-    switch (filters.sort) {
-      case 'rating':
-        result.sort((a, b) => b.rating - a.rating);
-        break;
-      case 'time-asc':
-        result.sort((a, b) => a.cookingTime - b.cookingTime);
-        break;
-      case 'time-desc':
-        result.sort((a, b) => b.cookingTime - a.cookingTime);
-        break;
-      case 'newest':
-        result.sort((a, b) => b.id - a.id);
-        break;
-      default:
-        result.sort((a, b) => (b.tags?.includes('popular') ? 1 : 0) - (a.tags?.includes('popular') ? 1 : 0));
-    }
-
-    return result;
-  }, [filters]);
-
-  const activeFilterCount = useMemo(() => {
+  const activeFilterCount = (() => {
     let count = 0;
     if (filters.cuisine) count++;
     if (filters.category) count++;
@@ -77,10 +52,28 @@ export default function Explore() {
     if (filters.cookingTime) count++;
     if (filters.difficulty) count++;
     return count;
-  }, [filters]);
+  })();
+
+  useEffect(() => {
+    const fetchReferenceData = async () => {
+      try {
+        const [cuisinesData, categoriesData, difficultiesData] = await Promise.all([
+          categoryService.getCuisines(),
+          categoryService.getCategories(),
+          categoryService.getDifficulties(),
+        ]);
+        setCuisines(cuisinesData);
+        setCategories(categoriesData);
+        setDifficulties(difficultiesData);
+      } catch (err) {
+        console.error('Failed to load reference data:', err);
+      }
+    };
+    fetchReferenceData();
+  }, []);
 
   const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
+    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
   };
 
   const clearFilters = () => {
@@ -89,6 +82,10 @@ export default function Explore() {
 
   const removeFilter = (key) => {
     setFilters(prev => ({ ...prev, [key]: initialFilters[key] }));
+  };
+
+  const handleRetry = () => {
+    refetch();
   };
 
   return (
@@ -297,7 +294,7 @@ export default function Explore() {
 
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm text-charcoal-500 dark:text-charcoal-400">
-                {filteredRecipes.length} recipe{filteredRecipes.length !== 1 ? 's' : ''} found
+                {pagination.total} recipe{pagination.total !== 1 ? 's' : ''} found
               </p>
               <div className="hidden lg:flex items-center gap-2">
                 <Button 
@@ -317,20 +314,58 @@ export default function Explore() {
               </div>
             </div>
 
-            {filteredRecipes.length > 0 ? (
+            {error ? (
+              <div className="card p-8 text-center" role="alert">
+                <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-charcoal-900 dark:text-warm-100 mb-2">
+                  Unable to load recipes
+                </h3>
+                <p className="text-charcoal-500 dark:text-charcoal-400 mb-4">
+                  {error}
+                </p>
+                <Button variant="primary" leftIcon={<RefreshCw className="h-4 w-4" />} onClick={handleRetry}>
+                  Try Again
+                </Button>
+              </div>
+            ) : loading ? (
               <div 
                 className={`grid gap-6 ${viewMode === 'grid' ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}
                 role="list"
                 aria-label="Recipes"
+                aria-busy="true"
               >
-                {filteredRecipes.map(recipe => (
-                  <RecipeCard 
-                    key={recipe.id} 
-                    recipe={recipe} 
-                    variant={viewMode === 'list' ? 'compact' : 'default'}
-                  />
+                {[...Array(6)].map((_, i) => (
+                  <RecipeCardSkeleton key={i} variant={viewMode === 'list' ? 'compact' : 'default'} />
                 ))}
               </div>
+            ) : recipes.length > 0 ? (
+              <>
+                <div 
+                  className={`grid gap-6 ${viewMode === 'grid' ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1'}`}
+                  role="list"
+                  aria-label="Recipes"
+                >
+                  {recipes.map(recipe => (
+                    <RecipeCard 
+                      key={recipe.id} 
+                      recipe={recipe} 
+                      variant={viewMode === 'list' ? 'compact' : 'default'}
+                    />
+                  ))}
+                </div>
+                {hasMore && (
+                  <div className="mt-8 text-center">
+                    <Button 
+                      variant="outline" 
+                      leftIcon={<Loader2 className="h-4 w-4" />}
+                      onClick={loadMore}
+                      disabled={loading}
+                    >
+                      Load More Recipes
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
               <EmptyState 
                 type="search" 

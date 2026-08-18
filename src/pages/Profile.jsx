@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   User, Heart, Clock, Settings, Bell, 
   Shield, Moon, Palette, Utensils, Flame, 
   Globe, ChevronRight, Edit, Camera
 } from 'lucide-react';
-import { getFavoriteRecipes, getRecipeById } from '../data/recipes';
+import { recipeService } from '../services/recipeService';
 import RecipeCard from '../components/RecipeCard';
+import RecipeCardSkeleton from '../components/RecipeCardSkeleton';
 import Button from '../components/Button';
 import CategoryChip from '../components/CategoryChip';
 import EmptyState from '../components/EmptyState';
@@ -45,51 +46,44 @@ const spiceLevels = [
   { id: 'extra-hot', label: 'Extra Hot', icon: '🌶️🌶️🌶️🌶️' },
 ];
 
-const cuisinesList = [
-  { id: 'italian', name: 'Italian', icon: '🍝' },
-  { id: 'korean', name: 'Korean', icon: '🥘' },
-  { id: 'mexican', name: 'Mexican', icon: '🌮' },
-  { id: 'indian', name: 'Indian', icon: '🍛' },
-  { id: 'chinese', name: 'Chinese', icon: '🥢' },
-  { id: 'japanese', name: 'Japanese', icon: '🍣' },
-  { id: 'thai', name: 'Thai', icon: '🌰' },
-  { id: 'mediterranean', name: 'Mediterranean', icon: '🫒' },
-];
-
 export default function Profile() {
   const [activeTab, setActiveTab] = useState('overview');
   const [editMode, setEditMode] = useState(false);
-  const favoriteRecipes = getFavoriteRecipes();
+  const [favoriteRecipes, setFavoriteRecipes] = useState([]);
+  const [favoritesLoading, setFavoritesLoading] = useState(true);
+  const [favoritesError, setFavoritesError] = useState(null);
+
+  useEffect(() => {
+    if (activeTab === 'favorites') {
+      fetchFavorites();
+    }
+  }, [activeTab]);
+
+  const fetchFavorites = async () => {
+    setFavoritesLoading(true);
+    setFavoritesError(null);
+    try {
+      // In a real app, this would fetch from user's favorites
+      // For now, we'll get popular recipes as a placeholder
+      const data = await recipeService.getPopularRecipes(12);
+      setFavoriteRecipes(data);
+    } catch (err) {
+      setFavoritesError(err.message);
+    } finally {
+      setFavoritesLoading(false);
+    }
+  };
 
   const handleDietaryToggle = (id) => {
-    setMockUser(prev => ({
-      ...prev,
-      preferences: {
-        ...prev.preferences,
-        dietary: prev.preferences.dietary.includes(id)
-          ? prev.preferences.dietary.filter(d => d !== id)
-          : [...prev.preferences.dietary, id]
-      }
-    }));
+    console.log('Toggle dietary:', id);
   };
 
   const handleSpiceSelect = (id) => {
-    setMockUser(prev => ({
-      ...prev,
-      preferences: { ...prev.preferences, spiceLevel: id }
-    }));
+    console.log('Select spice level:', id);
   };
 
   const handleCuisineToggle = (id) => {
-    setMockUser(prev => ({
-      ...prev,
-      preferences: {
-        ...prev.preferences,
-        favoriteCuisines: prev.preferences.favoriteCuisines.includes(id)
-          ? prev.preferences.favoriteCuisines.filter(c => c !== id)
-          : [...prev.preferences.favoriteCuisines, id]
-      }
-    }));
+    console.log('Toggle cuisine:', id);
   };
 
   return (
@@ -231,7 +225,18 @@ export default function Profile() {
                 <h2 className="font-semibold text-charcoal-900 dark:text-warm-100">Favorite Recipes</h2>
                 <span className="text-sm text-charcoal-500 dark:text-charcoal-400">{favoriteRecipes.length} recipes</span>
               </div>
-              {favoriteRecipes.length > 0 ? (
+              {favoritesError ? (
+                <div className="card p-8 text-center" role="alert">
+                  <p className="text-charcoal-500 dark:text-charcoal-400 mb-4">Unable to load favorites</p>
+                  <Button variant="outline" onClick={fetchFavorites}>
+                    Try Again
+                  </Button>
+                </div>
+              ) : favoritesLoading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" aria-busy="true" aria-label="Loading favorites">
+                  {[...Array(6)].map((_, i) => <RecipeCardSkeleton key={i} />)}
+                </div>
+              ) : favoriteRecipes.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                   {favoriteRecipes.map(recipe => (
                     <RecipeCard key={recipe.id} recipe={recipe} />
@@ -306,13 +311,12 @@ export default function Profile() {
                   We'll prioritize these cuisines in your recommendations.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {cuisinesList.map(cuisine => (
+                  {mockUser.preferences.favoriteCuisines.map(cuisineId => (
                     <CategoryChip
-                      key={cuisine.id}
-                      label={cuisine.name}
-                      icon={cuisine.icon}
-                      selected={mockUser.preferences.favoriteCuisines.includes(cuisine.id)}
-                      onClick={() => handleCuisineToggle(cuisine.id)}
+                      key={cuisineId}
+                      label={cuisineId.charAt(0).toUpperCase() + cuisineId.slice(1)}
+                      selected={true}
+                      onClick={() => handleCuisineToggle(cuisineId)}
                     />
                   ))}
                 </div>
@@ -327,22 +331,12 @@ export default function Profile() {
                   We'll flag recipes containing these ingredients and suggest alternatives.
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  {['nuts', 'shellfish', 'dairy', 'gluten', 'soy', 'eggs'].map(allergy => (
+                  {mockUser.preferences.allergies.map(allergy => (
                     <CategoryChip
                       key={allergy}
                       label={allergy.charAt(0).toUpperCase() + allergy.slice(1)}
-                      selected={mockUser.preferences.allergies.includes(allergy)}
-                      onClick={() => {
-                        setMockUser(prev => ({
-                          ...prev,
-                          preferences: {
-                            ...prev.preferences,
-                            allergies: prev.preferences.allergies.includes(allergy)
-                              ? prev.preferences.allergies.filter(a => a !== allergy)
-                              : [...prev.preferences.allergies, allergy]
-                          }
-                        }));
-                      }}
+                      selected={true}
+                      onClick={() => console.log('Toggle allergy:', allergy)}
                     />
                   ))}
                 </div>
@@ -353,9 +347,4 @@ export default function Profile() {
       </div>
     </div>
   );
-}
-
-// Helper to simulate state updates
-function setMockUser(updater) {
-  console.log('Profile update:', updater);
 }

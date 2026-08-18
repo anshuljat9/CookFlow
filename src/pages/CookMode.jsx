@@ -5,18 +5,13 @@ import {
   Mic, Music, X, Loader2, AlertTriangle, 
   ChefHat, Clock, Volume2, VolumeX
 } from 'lucide-react';
-import { getRecipeById } from '../data/recipes';
+import { useRecipe } from '../hooks/useRecipes';
+import { formatTime } from '../utils/recipeUtils';
 import Button from '../components/Button';
-
-const formatTime = (seconds) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-};
 
 export default function CookMode() {
   const { id } = useParams();
-  const recipe = getRecipeById(parseInt(id));
+  const { recipe, loading, error } = useRecipe(id);
   const [currentStep, setCurrentStep] = useState(0);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
@@ -25,8 +20,10 @@ export default function CookMode() {
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
   const [ingredientChecks, setIngredientChecks] = useState({});
 
-  const totalSteps = recipe?.instructions.length || 0;
-  const currentInstruction = recipe?.instructions[currentStep] || '';
+  const steps = recipe?.recipe_steps || [];
+  const ingredients = recipe?.recipe_ingredients || [];
+  const totalSteps = steps.length;
+  const currentInstruction = steps[currentStep]?.instruction || '';
   const progress = totalSteps > 0 ? ((currentStep + 1) / totalSteps) * 100 : 0;
 
   useEffect(() => {
@@ -98,12 +95,27 @@ export default function CookMode() {
     window.history.back();
   };
 
-  if (!recipe) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-charcoal-950">
         <div className="text-center text-white">
           <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary-500" />
           <p>Loading recipe...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !recipe) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-charcoal-950">
+        <div className="text-center text-white">
+          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-bold mb-2">Recipe not found</h2>
+          <p className="text-charcoal-400 mb-6">{error || 'This recipe doesn\'t exist or has been removed.'}</p>
+          <Button variant="primary" onClick={() => window.history.back()}>
+            Back to Explore
+          </Button>
         </div>
       </div>
     );
@@ -239,25 +251,29 @@ export default function CookMode() {
                   Ingredient Checklist
                 </h2>
                 <ul className="space-y-2" role="list">
-                  {recipe.ingredients.map((ingredient, index) => (
-                    <li key={index}>
-                      <label className="flex items-center gap-3 p-3 rounded-xl bg-charcoal-800 hover:bg-charcoal-700 cursor-pointer transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={ingredientChecks[index]}
-                          onChange={() => handleIngredientToggle(index)}
-                          className="w-5 h-5 rounded text-primary-600 border-charcoal-600 focus:ring-primary-500 bg-charcoal-700"
-                          aria-label={`Mark ${ingredient} as ready`}
-                        />
-                        <span className={`${ingredientChecks[index] ? 'line-through text-charcoal-500' : 'text-white'} flex-1`}>
-                          {ingredient}
-                        </span>
-                        {ingredientChecks[index] && (
-                          <Check className="h-5 w-5 text-green-500" />
-                        )}
-                      </label>
-                    </li>
-                  ))}
+                  {ingredients.length > 0 ? (
+                    ingredients.map((ri, index) => (
+                      <li key={ri.id || index}>
+                        <label className="flex items-center gap-3 p-3 rounded-xl bg-charcoal-800 hover:bg-charcoal-700 cursor-pointer transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={ingredientChecks[index]}
+                            onChange={() => handleIngredientToggle(index)}
+                            className="w-5 h-5 rounded text-primary-600 border-charcoal-600 focus:ring-primary-500 bg-charcoal-700"
+                            aria-label={`Mark ingredient as ready`}
+                          />
+                          <span className={`${ingredientChecks[index] ? 'line-through text-charcoal-500' : 'text-white'} flex-1`}>
+                            {ri.ingredient?.name ? `${ri.quantity} ${ri.unit} ${ri.preparation ? `(${ri.preparation}) ` : ''}${ri.ingredient.name}` : 'Ingredient'}
+                          </span>
+                          {ingredientChecks[index] && (
+                            <Check className="h-5 w-5 text-green-500" />
+                          )}
+                        </label>
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-charcoal-400 text-center py-8">No ingredients listed</li>
+                  )}
                 </ul>
               </div>
             </section>
@@ -269,7 +285,7 @@ export default function CookMode() {
               <dl className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-charcoal-400">Total Time</dt>
-                  <dd className="font-medium">{recipe.cookingTime}m</dd>
+                  <dd className="font-medium">{recipe.total_time_minutes || recipe.cookingTime || 0}m</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-400">Servings</dt>
@@ -277,11 +293,11 @@ export default function CookMode() {
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-400">Difficulty</dt>
-                  <dd className="font-medium capitalize">{recipe.difficulty}</dd>
+                  <dd className="font-medium capitalize">{recipe.difficulty?.name || recipe.difficulty}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-400">Cuisine</dt>
-                  <dd className="font-medium capitalize">{recipe.cuisine}</dd>
+                  <dd className="font-medium capitalize">{recipe.cuisine?.name || recipe.cuisine}</dd>
                 </div>
               </dl>
             </section>

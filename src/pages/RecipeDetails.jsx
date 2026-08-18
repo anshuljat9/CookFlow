@@ -1,39 +1,32 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, Loader2, ArrowLeft } from 'lucide-react';
-import { getRecipeById } from '../data/recipes';
-import { cuisines, difficulties } from '../data/categories';
+import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles } from 'lucide-react';
+import { useRecipe } from '../hooks/useRecipes';
+import { recipeService } from '../services/recipeService';
+import { formatTime, formatIngredient } from '../utils/recipeUtils';
 import Button from '../components/Button';
-import LoadingState from '../components/LoadingState';
+import RecipeDetailSkeleton from '../components/RecipeDetailSkeleton';
 
 export default function RecipeDetails() {
   const { id } = useParams();
-  const recipe = getRecipeById(parseInt(id));
-  const [isFavorite, setIsFavorite] = useState(recipe?.isFavorite || false);
+  const { recipe, loading, error } = useRecipe(id);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [servings, setServings] = useState(1);
+  const [showSubstitutions, setShowSubstitutions] = useState(false);
 
-  const formatTime = (minutes) => {
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
-  };
-
-  if (!recipe) {
-    return (
-      <div className="container-custom py-16 text-center">
-        <LoadingState variant="card" size="lg" text="Recipe not found" />
-      </div>
-    );
-  }
-
-  const cuisine = cuisines.find(c => c.id === recipe.cuisine);
-  const difficulty = difficulties.find(d => d.id === recipe.difficulty);
+  useEffect(() => {
+    if (recipe) {
+      setIsFavorite(recipe.isFavorite || false);
+      setServings(recipe.servings || 1);
+    }
+  }, [recipe]);
 
   const handleFavorite = () => {
     setIsFavorite(prev => !prev);
   };
 
   const handleShare = async () => {
+    if (!recipe) return;
     if (navigator.share) {
       try {
         await navigator.share({
@@ -50,6 +43,51 @@ export default function RecipeDetails() {
     }
   };
 
+  const handleServingsChange = (newServings) => {
+    if (newServings >= 1 && newServings <= 20) {
+      setServings(newServings);
+    }
+  };
+
+  if (loading) {
+    return <RecipeDetailSkeleton />;
+  }
+
+  if (error || !recipe) {
+    return (
+      <div className="container-custom py-16 text-center">
+        <div className="card p-8 max-w-md mx-auto">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-charcoal-900 dark:text-warm-100 mb-2">
+            Recipe not found
+          </h3>
+          <p className="text-charcoal-500 dark:text-charcoal-400 mb-4">
+            {error || 'This recipe doesn\'t exist or has been removed.'}
+          </p>
+          <Link to="/explore">
+            <Button variant="primary" leftIcon={<ArrowLeft className="h-4 w-4" />}>
+              Back to Explore
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const cuisine = recipe.cuisine;
+  const difficulty = recipe.difficulty;
+  const tags = recipe.recipe_tags?.map(rt => rt.tag?.name).filter(Boolean) || [];
+  const ingredients = recipe.recipe_ingredients || [];
+  const steps = recipe.recipe_steps || [];
+  const imageUrl = recipe.image_url || recipe.image;
+  const prepTime = recipe.prep_time_minutes || 0;
+  const cookTime = recipe.cook_time_minutes || 0;
+  const totalTime = recipe.total_time_minutes || 0;
+
+  const isVegetarian = recipe.is_vegetarian || tags.includes('vegetarian');
+  const isVegan = recipe.is_vegan || tags.includes('vegan');
+  const isGlutenFree = recipe.is_gluten_free || tags.includes('gluten-free');
+
   return (
     <div className="animate-fade-in">
       <div className="container-custom py-6 sm:py-8">
@@ -62,9 +100,10 @@ export default function RecipeDetails() {
           <header className="mb-8">
             <div className="relative aspect-[16/9] rounded-3xl overflow-hidden mb-6">
               <img
-                src={recipe.image}
+                src={imageUrl}
                 alt={`${recipe.title} - ${recipe.description}`}
                 className="w-full h-full object-cover"
+                onError={(e) => { e.target.src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800&auto=format&fit=crop'; }}
               />
               <div className="absolute top-4 right-4 flex flex-col gap-2">
                 <button
@@ -87,16 +126,28 @@ export default function RecipeDetails() {
 
             <div className="flex flex-wrap items-center gap-4 mb-4">
               {cuisine && (
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${cuisine.color}`}>
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${cuisine.color_class}`}>
                   {cuisine.icon} {cuisine.name}
                 </span>
               )}
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${difficulty?.color}`}>
-                {difficulty?.name}
-              </span>
-              {recipe.tags?.includes('vegetarian') && (
+              {difficulty && (
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${difficulty.color_class}`}>
+                  {difficulty.name}
+                </span>
+              )}
+              {isVegetarian && (
                 <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
                   🌱 Vegetarian
+                </span>
+              )}
+              {isVegan && (
+                <span className="px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                  🌿 Vegan
+                </span>
+              )}
+              {isGlutenFree && (
+                <span className="px-3 py-1 rounded-full text-sm font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                  🌾 Gluten Free
                 </span>
               )}
             </div>
@@ -114,19 +165,38 @@ export default function RecipeDetails() {
               <dl className="space-y-3 text-sm">
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Prep Time</dt>
-                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(Math.round(recipe.cookingTime * 0.3))}</dd>
+                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(prepTime)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Cook Time</dt>
-                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(Math.round(recipe.cookingTime * 0.7))}</dd>
+                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(cookTime)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Total Time</dt>
-                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(recipe.cookingTime)}</dd>
+                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{formatTime(totalTime)}</dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Servings</dt>
-                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">{recipe.servings} people</dd>
+                  <dd className="font-medium text-charcoal-900 dark:text-warm-100">
+                    <div className="flex items-center gap-2">
+                      <span>{recipe.servings} people</span>
+                      <div className="flex items-center gap-1 border border-warm-300 dark:border-charcoal-600 rounded-lg px-2 py-1">
+                        <button
+                          onClick={() => handleServingsChange(servings - 1)}
+                          disabled={servings <= 1}
+                          className="p-1 text-charcoal-500 hover:text-charcoal-700 dark:text-charcoal-400 dark:hover:text-warm-200 disabled:opacity-50"
+                          aria-label="Decrease servings"
+                        >−</button>
+                        <span className="w-8 text-center font-medium text-charcoal-900 dark:text-warm-100">{servings}</span>
+                        <button
+                          onClick={() => handleServingsChange(servings + 1)}
+                          disabled={servings >= 20}
+                          className="p-1 text-charcoal-500 hover:text-charcoal-700 dark:text-charcoal-400 dark:hover:text-warm-200 disabled:opacity-50"
+                          aria-label="Increase servings"
+                        >+</button>
+                      </div>
+                    </div>
+                  </dd>
                 </div>
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Difficulty</dt>
@@ -135,9 +205,18 @@ export default function RecipeDetails() {
                 <div className="flex justify-between">
                   <dt className="text-charcoal-500 dark:text-charcoal-400">Rating</dt>
                   <dd className="font-medium text-charcoal-900 dark:text-warm-100 flex items-center gap-1">
-                    <span className="text-amber-500">★</span> {recipe.rating}/5
+                    <span className="text-amber-500">★</span> {recipe.rating?.toFixed(1) || '—'}/5
+                    {recipe.rating_count && (
+                      <span className="text-charcoal-400 dark:text-charcoal-500">({recipe.rating_count})</span>
+                    )}
                   </dd>
                 </div>
+                {recipe.calories && (
+                  <div className="flex justify-between">
+                    <dt className="text-charcoal-500 dark:text-charcoal-400">Calories (per serving)</dt>
+                    <dd className="font-medium text-charcoal-900 dark:text-warm-100">{recipe.calories} kcal</dd>
+                  </div>
+                )}
               </dl>
             </div>
 
@@ -147,14 +226,38 @@ export default function RecipeDetails() {
                 Instructions
               </h2>
               <ol className="space-y-4">
-                {recipe.instructions.map((step, index) => (
-                  <li key={index} className="flex gap-4">
-                    <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-sm font-bold text-primary-600 dark:text-primary-400">
-                      {index + 1}
-                    </span>
-                    <p className="text-charcoal-700 dark:text-warm-200 pt-1 leading-relaxed">{step}</p>
+                {steps.length > 0 ? (
+                  steps.map((step, index) => (
+                    <li key={step.id || index} className="flex gap-4">
+                      <span className="flex-shrink-0 w-8 h-8 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-sm font-bold text-primary-600 dark:text-primary-400">
+                        {step.step_number || index + 1}
+                      </span>
+                      <div className="flex-1">
+                        <p className="text-charcoal-700 dark:text-warm-200 pt-1 leading-relaxed">{step.instruction}</p>
+                        {(step.duration_seconds || step.temperature || step.tip) && (
+                          <div className="flex flex-wrap gap-4 mt-2 text-xs text-charcoal-500 dark:text-charcoal-400">
+                            {step.duration_seconds && (
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3.5 w-3.5" />
+                                {formatTime(Math.round(step.duration_seconds / 60))}
+                              </span>
+                            )}
+                            {step.temperature && (
+                              <span className="flex items-center gap-1">🌡 {step.temperature}</span>
+                            )}
+                            {step.tip && (
+                              <span className="flex items-center gap-1">💡 {step.tip}</span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-charcoal-500 dark:text-charcoal-400 text-center py-8">
+                    No instructions available
                   </li>
-                ))}
+                )}
               </ol>
             </div>
           </div>
@@ -163,15 +266,28 @@ export default function RecipeDetails() {
             <section className="card p-5">
               <h2 className="font-semibold text-charcoal-900 dark:text-warm-100 mb-4 flex items-center gap-2">
                 <Users className="h-5 w-5 text-primary-600" />
-                Ingredients ({recipe.ingredients.length})
+                Ingredients ({ingredients.length})
               </h2>
               <ul className="space-y-2" role="list">
-                {recipe.ingredients.map((ingredient, index) => (
-                  <li key={index} className="flex items-center gap-3 p-2 rounded-xl hover:bg-warm-50 dark:hover:bg-charcoal-800 transition-colors">
-                    <input type="checkbox" className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500" />
-                    <span className="text-charcoal-700 dark:text-warm-200 flex-1">{ingredient}</span>
+                {ingredients.length > 0 ? (
+                  ingredients.map((ri, index) => (
+                    <li key={ri.id || index} className="flex items-center gap-3 p-2 rounded-xl hover:bg-warm-50 dark:hover:bg-charcoal-800 transition-colors">
+                      <input type="checkbox" className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500" />
+                      <span className="text-charcoal-700 dark:text-warm-200 flex-1">
+                        {formatIngredient(ri, servings)}
+                      </span>
+                      {ri.is_optional && (
+                        <span className="text-xs text-charcoal-400 dark:text-charcoal-500 px-2 py-0.5 rounded bg-warm-100 dark:bg-charcoal-800">
+                          Optional
+                        </span>
+                      )}
+                    </li>
+                  ))
+                ) : (
+                  <li className="text-charcoal-500 dark:text-charcoal-400 text-center py-8">
+                    No ingredients listed
                   </li>
-                ))}
+                )}
               </ul>
             </section>
 
@@ -181,10 +297,7 @@ export default function RecipeDetails() {
                 Need an ingredient?
               </h2>
               <p className="text-charcoal-600 dark:text-charcoal-300 mb-4">
-                Don't have <strong>heavy cream</strong> or <strong>fresh basil</strong>?
-              </p>
-              <p className="text-sm text-charcoal-500 dark:text-charcoal-400 mb-4">
-                AI will suggest smart substitutions based on what you have in your kitchen.
+                Don't have certain ingredients? AI will suggest smart substitutions based on what you have in your kitchen.
               </p>
               <Button variant="outline" leftIcon={<Sparkles className="h-4 w-4" />} disabled>
                 Find Substitutions (Coming Soon)
