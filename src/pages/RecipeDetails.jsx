@@ -1,23 +1,27 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles, Check, X, RotateCcw } from 'lucide-react';
+import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles, Check, X, RotateCcw, Loader2 } from 'lucide-react';
 import { useRecipe } from '../hooks/useRecipes';
 import { useKitchen } from '../hooks/useKitchen';
 import { useRecipeMatch } from '../hooks/useKitchenRecipes';
+import { useRecipeAdaptation } from '../hooks/useRecipeAdaptation';
 import { recipeService } from '../services/recipeService';
 import { formatTime, formatIngredient } from '../utils/recipeUtils';
 import Button from '../components/Button';
 import RecipeDetailSkeleton from '../components/RecipeDetailSkeleton';
 import IngredientMatchBadge from '../components/IngredientMatchBadge';
+import AdaptRecipeModal from '../components/AdaptRecipeModal';
+import RecipeComparison from '../components/RecipeComparison';
 
 export default function RecipeDetails() {
   const { id } = useParams();
   const { recipe, loading, error } = useRecipe(id);
   const { selectedIngredientIds } = useKitchen();
   const match = useRecipeMatch(recipe, selectedIngredientIds);
+  const { adaptedState, saveAdaptation, clearAdaptation, hasAdaptation } = useRecipeAdaptation(id);
   const [isFavorite, setIsFavorite] = useState(false);
   const [servings, setServings] = useState(1);
-  const [showSubstitutions, setShowSubstitutions] = useState(false);
+  const [showAdaptModal, setShowAdaptModal] = useState(false);
 
   useEffect(() => {
     if (recipe) {
@@ -25,6 +29,13 @@ export default function RecipeDetails() {
       setServings(recipe.servings || 1);
     }
   }, [recipe]);
+
+  // If we have an adapted state loaded, use it for servings
+  useEffect(() => {
+    if (adaptedState && !servings) {
+      setServings(adaptedState.servings);
+    }
+  }, [adaptedState, servings]);
 
   const handleFavorite = () => {
     setIsFavorite(prev => !prev);
@@ -53,6 +64,20 @@ export default function RecipeDetails() {
       setServings(newServings);
     }
   };
+
+  const handleAdaptComplete = (adaptedState) => {
+    saveAdaptation(adaptedState);
+    setShowAdaptModal(false);
+  };
+
+  const handleResetAdaptation = () => {
+    clearAdaptation();
+  };
+
+  const missingIngredients = match?.missingIngredients || [];
+  const missingRequired = missingIngredients.filter(m => !m.isOptional);
+  const hasMissingRequired = missingRequired.length > 0;
+  const hasKitchenContext = selectedIngredientIds.length > 0;
 
   if (loading) {
     return <RecipeDetailSkeleton />;
@@ -94,9 +119,7 @@ export default function RecipeDetails() {
   const isGlutenFree = recipe.is_gluten_free || tags.includes('gluten-free');
 
   const availableIngredients = match?.availableIngredients || [];
-  const missingIngredients = match?.missingIngredients || [];
   const matchPercentage = match?.matchPercentage || 0;
-  const hasKitchenContext = selectedIngredientIds.length > 0;
 
   return (
     <div className="animate-fade-in">
@@ -188,30 +211,41 @@ export default function RecipeDetails() {
                     </div>
                   </div>
                   <div>
-                    <p className="font-medium text-red-700 dark:text-red-300 mb-1">✕ Missing ({missingIngredients.filter(i => !i.isOptional).length})</p>
+                    <p className="font-medium text-red-700 dark:text-red-300 mb-1">✕ Missing ({missingRequired.length})</p>
                     <div className="flex flex-wrap gap-1">
-                      {missingIngredients.filter(i => !i.isOptional).slice(0, 5).map(ing => (
+                      {missingRequired.slice(0, 5).map(ing => (
                         <span key={ing.ingredientId} className="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
                           {ing.name}
                         </span>
                       ))}
-                      {missingIngredients.filter(i => !i.isOptional).length > 5 && (
+                      {missingRequired.length > 5 && (
                         <span className="px-2 py-0.5 rounded-full text-xs bg-warm-100 text-charcoal-500 dark:bg-charcoal-800 dark:text-charcoal-400">
-                          +{missingIngredients.filter(i => !i.isOptional).length - 5} more
+                          +{missingRequired.length - 5} more
                         </span>
                       )}
                     </div>
                   </div>
                 </div>
-                {missingIngredients.filter(i => !i.isOptional).length > 0 && (
+                {hasMissingRequired && !hasAdaptation && (
+                  <Button 
+                    variant="primary" 
+                    leftIcon={<Sparkles className="h-4 w-4" />}
+                    className="mt-3 w-full"
+                    onClick={() => setShowAdaptModal(true)}
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Adapt Recipe with AI
+                  </Button>
+                )}
+                {hasAdaptation && (
                   <Button 
                     variant="outline" 
                     leftIcon={<Sparkles className="h-4 w-4" />}
-                    className="mt-3"
-                    disabled
+                    className="mt-3 w-full"
+                    onClick={() => setShowAdaptModal(true)}
                   >
                     <RotateCcw className="h-4 w-4" />
-                    Adapt This Recipe (Coming Soon)
+                    Modify Adaptations
                   </Button>
                 )}
               </div>
@@ -375,6 +409,15 @@ export default function RecipeDetails() {
             </section>
           </div>
 
+          {hasAdaptation && adaptedState && (
+            <RecipeComparison
+              originalRecipe={recipe}
+              adaptedRecipe={adaptedState}
+              onReset={handleResetAdaptation}
+              onStartCooking={() => {}}
+            />
+          )}
+
           <div className="flex flex-wrap gap-4">
             <Link to={`/cook/${recipe.id}`}>
               <Button size="lg" leftIcon={<ChefHat className="h-5 w-5" />} className="flex-1 sm:flex-none">
@@ -388,6 +431,21 @@ export default function RecipeDetails() {
               Share
             </Button>
           </div>
+
+          <AdaptRecipeModal
+            isOpen={showAdaptModal}
+            onClose={() => setShowAdaptModal(false)}
+            recipe={recipe}
+            missingIngredients={missingRequired}
+            kitchenIngredients={match?.availableIngredients?.map(ai => ({
+              id: ai.ingredientId,
+              name: ai.name,
+              role: ai.role,
+            })) || []}
+            servings={servings}
+            originalServings={recipe.servings || 1}
+            onAdaptComplete={handleAdaptComplete}
+          />
         </article>
       </div>
     </div>
