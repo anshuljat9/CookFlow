@@ -261,9 +261,6 @@ export const recipeService = {
     if (error) throw error;
     return true;
   },
-};
-
-export default recipeService;
 
   async getRecipeById(id) {
     const { data, error } = await supabase
@@ -343,120 +340,6 @@ export default recipeService;
     }
 
     return data;
-  },
-
-  async searchRecipes(query, options = {}) {
-    return this.getRecipes({ ...options, search: query });
-  },
-
-  async getRecipesByCuisine(cuisineId, options = {}) {
-    return this.getRecipes({ ...options, cuisine: cuisineId });
-  },
-
-  async getRecipesByCategory(categoryId, options = {}) {
-    return this.getRecipes({ ...options, category: categoryId });
-  },
-
-  async getRecipesByDiet(dietId, options = {}) {
-    return this.getRecipes({ ...options, dietType: dietId });
-  },
-
-  async getPopularRecipes(limit = 8) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .select(`
-        *,
-        cuisine:cuisines(*),
-        difficulty:difficulties(*),
-        recipe_tags(tag:tags(*))
-      `)
-      .order('rating_count', { ascending: false })
-      .limit(limit);
-
-    if (error) throw new Error('Unable to load popular recipes');
-    return data || [];
-  },
-
-  async getQuickRecipes(limit = 8, maxMinutes = 30) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .select(`
-        *,
-        cuisine:cuisines(*),
-        difficulty:difficulties(*),
-        recipe_tags(tag:tags(*)
-      `)
-      .lte('total_time_minutes', maxMinutes)
-      .order('total_time_minutes', { ascending: true })
-      .limit(limit);
-
-    if (error) throw new Error('Unable to load quick recipes');
-    return data || [];
-  },
-
-  async getTrendingRecipes(limit = 8) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .select(`
-        *,
-        cuisine:cuisines(*),
-        difficulty:difficulties(*),
-        recipe_tags(tag:tags(*))
-      `)
-      .order('rating', { ascending: false })
-      .limit(limit);
-
-    if (error) throw new Error('Unable to load trending recipes');
-    return data || [];
-  },
-
-  async getRecipesByIds(ids) {
-    if (!ids.length) return [];
-    const { data, error } = await supabase
-      .from('recipes')
-      .select(`
-        *,
-        cuisine:cuisines(*),
-        difficulty:difficulties(*),
-        recipe_tags(tag:tags(*))
-      `)
-      .in('id', ids);
-
-    if (error) throw new Error('Unable to load recipes');
-    return data || [];
-  },
-
-  async createRecipe(recipeData) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .insert(recipeData)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
-  },
-
-  async updateRecipe(id, updates) {
-    const { data, error } = await supabase
-      .from('recipes')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
-  },
-
-  async deleteRecipe(id) {
-    const { error } = await supabase
-      .from('recipes')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-    return true;
   },
 };
 

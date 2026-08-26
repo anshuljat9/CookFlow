@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Menu, X, Search, Heart, User, Sun, Moon, ChevronDown } from 'lucide-react';
 import Button from './Button';
 import SearchBar from './SearchBar';
@@ -23,6 +23,7 @@ export default function Navbar() {
   });
   const [searchQuery, setSearchQuery] = useState('');
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -40,6 +41,13 @@ export default function Navbar() {
   }, [location]);
 
   const toggleTheme = () => setIsDark(prev => !prev);
+
+  const handleSearchSubmit = (query) => {
+    if (query && query.trim()) {
+      navigate(`/explore?q=${encodeURIComponent(query.trim())}`);
+      setSearchQuery('');
+    }
+  };
 
   return (
     <header className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled ? 'bg-white/90 dark:bg-charcoal-950/90 backdrop-blur-md shadow-card' : 'bg-transparent'}`}>
@@ -70,9 +78,10 @@ export default function Navbar() {
             <SearchBar 
               value={searchQuery}
               onChange={setSearchQuery}
-              onSubmit={(q) => q && console.log('Search:', q)}
+              onSubmit={handleSearchSubmit}
               placeholder="Search recipes..."
               autoFocus={false}
+              showSuggestions={true}
             />
           </div>
 
@@ -110,8 +119,9 @@ export default function Navbar() {
               <SearchBar 
                 value={searchQuery}
                 onChange={setSearchQuery}
-                onSubmit={(q) => q && console.log('Search:', q)}
+                onSubmit={handleSearchSubmit}
                 placeholder="Search recipes..."
+                showSuggestions={true}
               />
             </div>
             <div className="flex flex-col gap-1 mb-4">

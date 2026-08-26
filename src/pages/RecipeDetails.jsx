@@ -1,15 +1,20 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles } from 'lucide-react';
+import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles, Check, X, RotateCcw } from 'lucide-react';
 import { useRecipe } from '../hooks/useRecipes';
+import { useKitchen } from '../hooks/useKitchen';
+import { useRecipeMatch } from '../hooks/useKitchenRecipes';
 import { recipeService } from '../services/recipeService';
 import { formatTime, formatIngredient } from '../utils/recipeUtils';
 import Button from '../components/Button';
 import RecipeDetailSkeleton from '../components/RecipeDetailSkeleton';
+import IngredientMatchBadge from '../components/IngredientMatchBadge';
 
 export default function RecipeDetails() {
   const { id } = useParams();
   const { recipe, loading, error } = useRecipe(id);
+  const { selectedIngredientIds } = useKitchen();
+  const match = useRecipeMatch(recipe, selectedIngredientIds);
   const [isFavorite, setIsFavorite] = useState(false);
   const [servings, setServings] = useState(1);
   const [showSubstitutions, setShowSubstitutions] = useState(false);
@@ -88,6 +93,11 @@ export default function RecipeDetails() {
   const isVegan = recipe.is_vegan || tags.includes('vegan');
   const isGlutenFree = recipe.is_gluten_free || tags.includes('gluten-free');
 
+  const availableIngredients = match?.availableIngredients || [];
+  const missingIngredients = match?.missingIngredients || [];
+  const matchPercentage = match?.matchPercentage || 0;
+  const hasKitchenContext = selectedIngredientIds.length > 0;
+
   return (
     <div className="animate-fade-in">
       <div className="container-custom py-6 sm:py-8">
@@ -154,6 +164,58 @@ export default function RecipeDetails() {
 
             <h1 className="text-3xl sm:text-4xl font-bold text-charcoal-900 dark:text-warm-100 mb-3">{recipe.title}</h1>
             <p className="text-lg text-charcoal-600 dark:text-charcoal-300 max-w-2xl">{recipe.description}</p>
+
+            {hasKitchenContext && match && (
+              <div className="mt-6 p-4 rounded-2xl bg-primary-50 dark:bg-primary-900/20 border border-primary-100 dark:border-primary-800 animate-fade-in">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-charcoal-900 dark:text-warm-100">Your Kitchen Match</h3>
+                  <IngredientMatchBadge matchPercentage={matchPercentage} size="lg" />
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="font-medium text-green-700 dark:text-green-300 mb-1">✓ Available ({availableIngredients.filter(i => !i.isOptional).length})</p>
+                    <div className="flex flex-wrap gap-1">
+                      {availableIngredients.filter(i => !i.isOptional).slice(0, 5).map(ing => (
+                        <span key={ing.ingredientId} className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                          {ing.name}
+                        </span>
+                      ))}
+                      {availableIngredients.filter(i => !i.isOptional).length > 5 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs bg-warm-100 text-charcoal-500 dark:bg-charcoal-800 dark:text-charcoal-400">
+                          +{availableIngredients.filter(i => !i.isOptional).length - 5} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <p className="font-medium text-red-700 dark:text-red-300 mb-1">✕ Missing ({missingIngredients.filter(i => !i.isOptional).length})</p>
+                    <div className="flex flex-wrap gap-1">
+                      {missingIngredients.filter(i => !i.isOptional).slice(0, 5).map(ing => (
+                        <span key={ing.ingredientId} className="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                          {ing.name}
+                        </span>
+                      ))}
+                      {missingIngredients.filter(i => !i.isOptional).length > 5 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs bg-warm-100 text-charcoal-500 dark:bg-charcoal-800 dark:text-charcoal-400">
+                          +{missingIngredients.filter(i => !i.isOptional).length - 5} more
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {missingIngredients.filter(i => !i.isOptional).length > 0 && (
+                  <Button 
+                    variant="outline" 
+                    leftIcon={<Sparkles className="h-4 w-4" />}
+                    className="mt-3"
+                    disabled
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Adapt This Recipe (Coming Soon)
+                  </Button>
+                )}
+              </div>
+            )}
           </header>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -270,19 +332,27 @@ export default function RecipeDetails() {
               </h2>
               <ul className="space-y-2" role="list">
                 {ingredients.length > 0 ? (
-                  ingredients.map((ri, index) => (
-                    <li key={ri.id || index} className="flex items-center gap-3 p-2 rounded-xl hover:bg-warm-50 dark:hover:bg-charcoal-800 transition-colors">
-                      <input type="checkbox" className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500" />
-                      <span className="text-charcoal-700 dark:text-warm-200 flex-1">
-                        {formatIngredient(ri, servings)}
-                      </span>
-                      {ri.is_optional && (
-                        <span className="text-xs text-charcoal-400 dark:text-charcoal-500 px-2 py-0.5 rounded bg-warm-100 dark:bg-charcoal-800">
-                          Optional
+                  ingredients.map((ri, index) => {
+                    const ingredientId = ri.ingredient?.id || ri.ingredient_id;
+                    const isAvailable = selectedIngredientIds.includes(ingredientId);
+                    const isMissing = !isAvailable;
+                    
+                    return (
+                      <li key={ri.id || index} className="flex items-center gap-3 p-2 rounded-xl hover:bg-warm-50 dark:hover:bg-charcoal-800 transition-colors">
+                        <span className={`w-5 h-5 flex-shrink-0 flex items-center justify-center ${isAvailable ? 'text-green-500' : 'text-red-500'}`}>
+                          {isAvailable ? <Check className="h-5 w-5" /> : <X className="h-5 w-5" />}
                         </span>
-                      )}
-                    </li>
-                  ))
+                        <span className={`text-charcoal-700 dark:text-warm-200 flex-1 ${isMissing ? 'line-through text-charcoal-400 dark:text-charcoal-500' : ''}`}>
+                          {formatIngredient(ri, servings)}
+                        </span>
+                        {ri.is_optional && (
+                          <span className="text-xs text-charcoal-400 dark:text-charcoal-500 px-2 py-0.5 rounded bg-warm-100 dark:bg-charcoal-800">
+                            Optional
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })
                 ) : (
                   <li className="text-charcoal-500 dark:text-charcoal-400 text-center py-8">
                     No ingredients listed

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { recipeService } from '../services/recipeService';
 
 export function useRecipes(options = {}) {
@@ -11,22 +11,37 @@ export function useRecipes(options = {}) {
     total: 0,
     totalPages: 0,
   });
+  const isInitialLoad = useRef(true);
 
   const fetchRecipes = useCallback(async (fetchOptions = {}) => {
-    setLoading(true);
+    const isLoadMore = fetchOptions.page && fetchOptions.page > 1;
+    
+    if (!isLoadMore) {
+      setLoading(true);
+    }
     setError(null);
+    
     try {
       const result = await recipeService.getRecipes({ ...options, ...fetchOptions });
-      setRecipes(result.recipes);
+      
+      if (isLoadMore) {
+        setRecipes(prev => [...prev, ...result.recipes]);
+      } else {
+        setRecipes(result.recipes);
+      }
+      
       setPagination(prev => ({
         ...prev,
         ...result,
       }));
     } catch (err) {
       setError(err.message);
-      setRecipes([]);
+      if (!isLoadMore) {
+        setRecipes([]);
+      }
     } finally {
       setLoading(false);
+      isInitialLoad.current = false;
     }
   }, [options]);
 

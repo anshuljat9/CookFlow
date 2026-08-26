@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { Filter, X, ChevronDown, Grid, List, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { Filter, X, ChevronDown, Grid, List, Loader2, AlertCircle, RefreshCw, SlidersHorizontal } from 'lucide-react';
 import { useRecipes } from '../hooks/useRecipes';
 import { categoryService } from '../services/categoryService';
 import RecipeCard from '../components/RecipeCard';
@@ -9,30 +9,23 @@ import CategoryChip from '../components/CategoryChip';
 import Button from '../components/Button';
 import SearchBar from '../components/SearchBar';
 import EmptyState from '../components/EmptyState';
-
-const initialFilters = {
-  search: '',
-  cuisine: '',
-  category: '',
-  vegetarian: false,
-  cookingTime: '',
-  difficulty: '',
-  sort: 'popular',
-};
+import FilterPanel from '../components/FilterPanel';
+import FilterBottomSheet from '../components/FilterBottomSheet';
+import { DEFAULT_FILTERS, FILTER_CONFIG, getActiveFilterCount, filtersToSearchParams, searchParamsToFilters } from '../utils/filterConfig';
 
 export default function Explore() {
-  const [filters, setFilters] = useState(initialFilters);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  
+  const [filters, setFilters] = useState(() => searchParamsToFilters(searchParams));
   const [viewMode, setViewMode] = useState('grid');
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
   const [cuisines, setCuisines] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [mealTypes, setMealTypes] = useState([]);
+  const [dietTypes, setDietTypes] = useState([]);
   const [difficulties, setDifficulties] = useState([]);
-  const [cookingTimes] = useState([
-    { id: 'under-15', name: 'Under 15 min', value: 15 },
-    { id: '15-30', name: '15-30 min', value: 30 },
-    { id: '30-60', name: '30-60 min', value: 60 },
-    { id: 'over-60', name: 'Over 60 min', value: 120 },
-  ]);
 
   const {
     recipes,
@@ -44,26 +37,22 @@ export default function Explore() {
     hasMore,
   } = useRecipes(filters);
 
-  const activeFilterCount = (() => {
-    let count = 0;
-    if (filters.cuisine) count++;
-    if (filters.category) count++;
-    if (filters.vegetarian) count++;
-    if (filters.cookingTime) count++;
-    if (filters.difficulty) count++;
-    return count;
-  })();
+  const activeFilterCount = getActiveFilterCount(filters);
 
   useEffect(() => {
     const fetchReferenceData = async () => {
       try {
-        const [cuisinesData, categoriesData, difficultiesData] = await Promise.all([
+        const [cuisinesData, categoriesData, mealTypesData, dietTypesData, difficultiesData] = await Promise.all([
           categoryService.getCuisines(),
-          categoryService.getCategories(),
+          categoryService.getCategories('meal'),
+          categoryService.getMealTypes(),
+          categoryService.getDietTypes(),
           categoryService.getDifficulties(),
         ]);
         setCuisines(cuisinesData);
         setCategories(categoriesData);
+        setMealTypes(mealTypesData);
+        setDietTypes(dietTypesData);
         setDifficulties(difficultiesData);
       } catch (err) {
         console.error('Failed to load reference data:', err);
@@ -72,21 +61,90 @@ export default function Explore() {
     fetchReferenceData();
   }, []);
 
-  const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value, page: 1 }));
-  };
+  const handleFilterChange = useCallback((key, value) => {
+    setFilters(prev => {
+      const next = { ...prev, [key]: value, page: 1 };
+      const params = filtersToSearchParams(next);
+      navigate(`/explore?${params}`, { replace: true });
+      return next;
+    });
+  }, [navigate]);
 
-  const clearFilters = () => {
-    setFilters(initialFilters);
-  };
+  const clearFilters = useCallback(() => {
+    const params = filtersToSearchParams(DEFAULT_FILTERS);
+    navigate(`/explore?${params}`, { replace: true });
+    setFilters(DEFAULT_FILTERS);
+  }, [navigate]);
 
-  const removeFilter = (key) => {
-    setFilters(prev => ({ ...prev, [key]: initialFilters[key] }));
-  };
+  const removeFilter = useCallback((key) => {
+    setFilters(prev => {
+      const defaultValue = DEFAULT_FILTERS[key];
+      const next = { ...prev, [key]: defaultValue };
+      const params = filtersToSearchParams(next);
+      navigate(`/explore?${params}`, { replace: true });
+      return next;
+    });
+  }, [navigate]);
 
   const handleRetry = () => {
     refetch();
   };
+
+  const activeFilterChips = useMemo(() => {
+    const chips = [];
+    
+    if (filters.cuisine) {
+      const cuisine = cuisines.find(c => c.id === filters.cuisine);
+      chips.push({ 
+        label: cuisine ? `${cuisine.icon} ${cuisine.name}` : filters.cuisine, 
+        key: 'cuisine' 
+      });
+    }
+    if (filters.category) {
+      const category = categories.find(c => c.id === filters.category);
+      chips.push({ 
+        label: category ? `${category.icon} ${category.name}` : filters.category, 
+        key: 'category' 
+      });
+    }
+    if (filters.mealType) {
+      const mealType = mealTypes.find(m => m.id === filters.mealType);
+      chips.push({ 
+        label: mealType ? `${mealType.icon} ${mealType.name}` : filters.mealType, 
+        key: 'mealType' 
+      });
+    }
+    if (filters.dietType) {
+      const dietType = dietTypes.find(d => d.id === filters.dietType);
+      chips.push({ 
+        label: dietType ? `${dietType.icon} ${dietType.name}` : filters.dietType, 
+        key: 'dietType' 
+      });
+    }
+    if (filters.difficulty) {
+      const difficulty = difficulties.find(d => d.id === filters.difficulty);
+      chips.push({ 
+        label: difficulty?.name || filters.difficulty, 
+        key: 'difficulty' 
+      });
+    }
+    if (filters.maxTime) {
+      const timeOpt = FILTER_CONFIG.cookingTime.options.find(t => t.id === filters.maxTime);
+      chips.push({ 
+        label: timeOpt?.name || filters.maxTime, 
+        key: 'maxTime' 
+      });
+    }
+    if (filters.minRating) {
+      const ratingOpt = FILTER_CONFIG.rating.options.find(r => r.value == filters.minRating);
+      chips.push({ 
+        label: ratingOpt?.name || `${filters.minRating}+ Stars`, 
+        key: 'minRating' 
+      });
+    }
+    
+    return chips;
+  }, [filters, cuisines, categories, mealTypes, dietTypes, difficulties]);
 
   return (
     <div className="animate-fade-in">
@@ -103,11 +161,12 @@ export default function Explore() {
                 onChange={(v) => handleFilterChange('search', v)}
                 placeholder="Search recipes..."
                 className="flex-1 max-w-md"
+                showSuggestions={true}
               />
               <Button 
                 variant="outline" 
-                leftIcon={<Filter className="h-4 w-4" />}
-                onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                leftIcon={<SlidersHorizontal className="h-4 w-4" />}
+                onClick={() => setIsMobileFiltersOpen(true)}
                 className="lg:hidden"
               >
                 Filters
@@ -140,155 +199,34 @@ export default function Explore() {
 
       <div className="container-custom py-6">
         <div className="flex flex-col lg:flex-row gap-8">
-          <aside className="lg:w-64 flex-shrink-0" aria-label="Filters">
-            <div className={`${isFiltersOpen ? 'block' : 'hidden lg:block'} lg:sticky lg:top-24`}>
-              <div className="card p-4 lg:p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-semibold text-charcoal-900 dark:text-warm-100">Filters</h2>
-                  {activeFilterCount > 0 && (
-                    <Button variant="ghost" size="sm" onClick={clearFilters}>
-                      <X className="h-3.5 w-3.5" />
-                      Clear all
-                    </Button>
-                  )}
-                </div>
-
-                <div className="space-y-6">
-                  <div>
-                    <label className="label" htmlFor="cuisine-filter">Cuisine</label>
-                    <select
-                      id="cuisine-filter"
-                      value={filters.cuisine}
-                      onChange={(e) => handleFilterChange('cuisine', e.target.value)}
-                      className="input text-sm py-2"
-                    >
-                      <option value="">All Cuisines</option>
-                      {cuisines.map(c => (
-                        <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label" htmlFor="category-filter">Category</label>
-                    <select
-                      id="category-filter"
-                      value={filters.category}
-                      onChange={(e) => handleFilterChange('category', e.target.value)}
-                      className="input text-sm py-2"
-                    >
-                      <option value="">All Categories</option>
-                      {categories.map(c => (
-                        <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="label">Cooking Time</label>
-                    <div className="flex flex-col gap-2">
-                      {cookingTimes.map(time => (
-                        <label key={time.id} className="flex items-center gap-3 cursor-pointer">
-                          <input
-                            type="radio"
-                            name="cookingTime"
-                            value={time.id}
-                            checked={filters.cookingTime === time.id}
-                            onChange={(e) => handleFilterChange('cookingTime', e.target.value)}
-                            className="w-4 h-4 text-primary-600 border-warm-300 focus:ring-primary-500"
-                          />
-                          <span className="text-sm text-charcoal-700 dark:text-warm-200">{time.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="label" htmlFor="difficulty-filter">Difficulty</label>
-                    <select
-                      id="difficulty-filter"
-                      value={filters.difficulty}
-                      onChange={(e) => handleFilterChange('difficulty', e.target.value)}
-                      className="input text-sm py-2"
-                    >
-                      <option value="">Any Difficulty</option>
-                      {difficulties.map(d => (
-                        <option key={d.id} value={d.id}>{d.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={filters.vegetarian}
-                        onChange={(e) => handleFilterChange('vegetarian', e.target.checked)}
-                        className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500"
-                      />
-                      <span className="text-sm text-charcoal-700 dark:text-warm-200">Vegetarian only</span>
-                    </label>
-                  </div>
-
-                  <div>
-                    <label className="label" htmlFor="sort-filter">Sort By</label>
-                    <select
-                      id="sort-filter"
-                      value={filters.sort}
-                      onChange={(e) => handleFilterChange('sort', e.target.value)}
-                      className="input text-sm py-2"
-                    >
-                      <option value="popular">Popular</option>
-                      <option value="rating">Highest Rated</option>
-                      <option value="time-asc">Quickest First</option>
-                      <option value="time-desc">Longest First</option>
-                      <option value="newest">Newest</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+          <aside className="lg:w-64 flex-shrink-0 hidden lg:block" aria-label="Filters">
+            <div className="lg:sticky lg:top-24">
+              <FilterPanel
+                filters={filters}
+                onFilterChange={handleFilterChange}
+                onClearFilters={clearFilters}
+                cuisines={cuisines}
+                categories={categories}
+                mealTypes={mealTypes}
+                dietTypes={dietTypes}
+                difficulties={difficulties}
+                activeFilterCount={activeFilterCount}
+              />
             </div>
           </aside>
 
           <main className="flex-1 min-w-0" role="main">
             {activeFilterCount > 0 && (
-              <div className="mb-4 flex flex-wrap items-center gap-2 lg:hidden">
+              <div className="mb-4 flex flex-wrap items-center gap-2" aria-label="Active filters">
                 <span className="text-sm text-charcoal-500 dark:text-charcoal-400">Active filters:</span>
-                {filters.cuisine && (
-                  <CategoryChip 
-                    label={cuisines.find(c => c.id === filters.cuisine)?.name || filters.cuisine}
-                    selected 
-                    onClick={() => removeFilter('cuisine')}
+                {activeFilterChips.map(({ label, key }) => (
+                  <CategoryChip
+                    key={key}
+                    label={label}
+                    selected
+                    onClick={() => removeFilter(key)}
                   />
-                )}
-                {filters.category && (
-                  <CategoryChip 
-                    label={categories.find(c => c.id === filters.category)?.name || filters.category}
-                    selected 
-                    onClick={() => removeFilter('category')}
-                  />
-                )}
-                {filters.vegetarian && (
-                  <CategoryChip 
-                    label="Vegetarian" 
-                    selected 
-                    onClick={() => removeFilter('vegetarian')}
-                  />
-                )}
-                {filters.cookingTime && (
-                  <CategoryChip 
-                    label={cookingTimes.find(t => t.id === filters.cookingTime)?.name || filters.cookingTime}
-                    selected 
-                    onClick={() => removeFilter('cookingTime')}
-                  />
-                )}
-                {filters.difficulty && (
-                  <CategoryChip 
-                    label={difficulties.find(d => d.id === filters.difficulty)?.name || filters.difficulty}
-                    selected 
-                    onClick={() => removeFilter('difficulty')}
-                  />
-                )}
+                ))}
               </div>
             )}
 
@@ -370,11 +308,27 @@ export default function Explore() {
               <EmptyState 
                 type="search" 
                 onActionClick={clearFilters}
+                showClearFilters={activeFilterCount > 0}
+                showPopularRecipes={true}
               />
             )}
           </main>
         </div>
       </div>
+
+      <FilterBottomSheet
+        isOpen={isMobileFiltersOpen}
+        onClose={() => setIsMobileFiltersOpen(false)}
+        filters={filters}
+        onFilterChange={handleFilterChange}
+        onClearFilters={clearFilters}
+        cuisines={cuisines}
+        categories={categories}
+        mealTypes={mealTypes}
+        dietTypes={dietTypes}
+        difficulties={difficulties}
+        activeFilterCount={activeFilterCount}
+      />
     </div>
   );
 }

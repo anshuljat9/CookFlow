@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChefHat, Zap, Search, Truck, Heart, Sparkles, Clock, Loader2 } from 'lucide-react';
+import { ArrowRight, ChefHat, Zap, Search, Truck, Heart, Sparkles, Clock, Loader2, Utensils, MapPin } from 'lucide-react';
 import { usePopularRecipes, useQuickRecipes, useTrendingRecipes } from '../hooks/useRecipes';
 import { categoryService } from '../services/categoryService';
 import { useState, useEffect } from 'react';
@@ -8,6 +8,8 @@ import RecipeCardSkeleton from '../components/RecipeCardSkeleton';
 import Button from '../components/Button';
 import SearchBar from '../components/SearchBar';
 import LoadingState from '../components/LoadingState';
+import CuisineCard from '../components/CuisineCard';
+import CategoryCard from '../components/CategoryCard';
 
 const howItWorks = [
   {
@@ -37,22 +39,42 @@ const features = [
   { icon: Clock, title: 'Cooking Mode', description: 'Hands-free step-by-step guidance' },
 ];
 
+const mealCategories = [
+  { id: 'breakfast', name: 'Breakfast', icon: '🥞' },
+  { id: 'lunch', name: 'Lunch', icon: '🍱' },
+  { id: 'dinner', name: 'Dinner', icon: '🍽️' },
+  { id: 'snacks', name: 'Snacks', icon: '🥜' },
+  { id: 'desserts', name: 'Desserts', icon: '🍰' },
+  { id: 'drinks', name: 'Drinks', icon: '🥤' },
+];
+
+const quickTimeOptions = [
+  { id: 'under-15', label: 'Under 15 min', maxTime: 15, icon: '⚡' },
+  { id: '15-30', label: '15-30 min', maxTime: 30, icon: '🕐' },
+  { id: '30-60', label: '30-60 min', maxTime: 60, icon: '🕑' },
+];
+
 export default function Home() {
   const [cuisines, setCuisines] = useState([]);
+  const [mealTypes, setMealTypes] = useState([]);
   const { recipes: popularRecipes, loading: popularLoading, error: popularError } = usePopularRecipes(8);
   const { recipes: quickRecipes, loading: quickLoading, error: quickError } = useQuickRecipes(8, 30);
   const { recipes: trendingRecipes, loading: trendingLoading, error: trendingError } = useTrendingRecipes(8);
 
   useEffect(() => {
-    const fetchCuisines = async () => {
+    const fetchReferenceData = async () => {
       try {
-        const data = await categoryService.getCuisines();
-        setCuisines(data);
+        const [cuisinesData, mealTypesData] = await Promise.all([
+          categoryService.getCuisines(),
+          categoryService.getMealTypes(),
+        ]);
+        setCuisines(cuisinesData);
+        setMealTypes(mealTypesData);
       } catch (err) {
-        console.error('Failed to load cuisines:', err);
+        console.error('Failed to load reference data:', err);
       }
     };
-    fetchCuisines();
+    fetchReferenceData();
   }, []);
 
   const renderSection = (title, recipes, loading, error, linkText, linkPath, icon) => (
@@ -62,6 +84,49 @@ export default function Home() {
           <div>
             <h2 id={title.toLowerCase().replace(/\s+/g, '-')} className="section-title">{title}</h2>
             <p className="section-subtitle">Curated just for you</p>
+          </div>
+          <Link to={linkPath} className="hidden sm:flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
+            {linkText}
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
+        {error ? (
+          <div className="card p-8 text-center" role="alert">
+            <p className="text-charcoal-500 dark:text-charcoal-400 mb-4">Unable to load {title.toLowerCase()}</p>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              Try Again
+            </Button>
+          </div>
+        ) : loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6" aria-busy="true" aria-label={`Loading ${title}`}>
+            {[...Array(4)].map((_, i) => <RecipeCardSkeleton key={i} />)}
+          </div>
+        ) : recipes.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {recipes.map(recipe => (
+              <RecipeCard key={recipe.id} recipe={recipe} />
+            ))}
+          </div>
+        ) : (
+          <div className="card p-8 text-center">
+            <p className="text-charcoal-500 dark:text-charcoal-400">No recipes found</p>
+          </div>
+        )}
+        <Link to={linkPath} className="sm:hidden mt-6 inline-flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
+          {linkText}
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
+    </section>
+  );
+
+  const renderQuickSection = (title, recipes, loading, error, linkText, linkPath, icon) => (
+    <section className="py-12 sm:py-16" aria-labelledby={title.toLowerCase().replace(/\s+/g, '-')}>
+      <div className="container-custom">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h2 id={title.toLowerCase().replace(/\s+/g, '-')} className="section-title">{title}</h2>
+            <p className="section-subtitle">Ready when you are</p>
           </div>
           <Link to={linkPath} className="hidden sm:flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
             {linkText}
@@ -139,6 +204,7 @@ export default function Home() {
                 onChange={() => {}}
                 defaultValue=""
                 className="w-full"
+                showSuggestions={true}
               />
               <p className="mt-3 text-sm text-charcoal-500 dark:text-charcoal-400">
                 Search recipes by ingredient, cuisine, or dish name
@@ -165,13 +231,14 @@ export default function Home() {
                 <h3 className="text-lg font-semibold text-charcoal-900 dark:text-warm-100 mb-2">{feature.title}</h3>
                 <p className="text-sm text-charcoal-500 dark:text-charcoal-400">{feature.description}</p>
               </div>
-            ))}
-          </div>
-        </div      </section>
+))}
+            </div>
+        </div>
+      </section>
 
       {renderSection('Popular Recipes', popularRecipes, popularLoading, popularError, 'View all popular', '/explore?sort=popular', Heart)}
-      {renderSection('Quick & Easy', quickRecipes, quickLoading, quickError, 'View all quick', '/explore?time=under-30', Zap)}
-      {renderSection('Trending Now', trendingRecipes, trendingLoading, trendingError, 'View trending', '/explore?sort=trending', Sparkles)}
+      {renderSection('Quick & Easy', quickRecipes, quickLoading, quickError, 'View all quick', '/explore?maxTime=30', Zap)}
+      {renderSection('Trending Now', trendingRecipes, trendingLoading, trendingError, 'View trending', '/explore?sort=rating', Sparkles)}
 
       <section className="py-12 sm:py-16 bg-warm-50 dark:bg-charcoal-900" aria-labelledby="cuisines-heading">
         <div className="container-custom">
@@ -182,15 +249,7 @@ export default function Home() {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             {cuisines.length > 0 ? (
               cuisines.map(cuisine => (
-                <Link 
-                  key={cuisine.id} 
-                  to={`/explore?cuisine=${cuisine.id}`}
-                  className="card-interactive aspect-square relative overflow-hidden p-6 flex flex-col items-center justify-center text-center group"
-                >
-                  <span className="text-4xl sm:text-5xl mb-3 group-hover:scale-110 transition-transform duration-300" aria-hidden="true">{cuisine.icon}</span>
-                  <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">{cuisine.name}</h3>
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                </Link>
+                <CuisineCard key={cuisine.id} cuisine={cuisine} />
               ))
             ) : (
               [...Array(10)].map((_, i) => (
@@ -200,6 +259,58 @@ export default function Home() {
                 </div>
               ))
             )}
+          </div>
+        </div>
+      </section>
+
+      <section className="py-12 sm:py-16" aria-labelledby="meals-heading">
+        <div className="container-custom">
+          <div className="text-center mb-12">
+            <h2 id="meals-heading" className="section-title">Browse by Meal</h2>
+            <p className="section-subtitle">Find the perfect dish for any time of day</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            {mealTypes.length > 0 ? (
+              mealTypes.map(mealType => (
+                <CategoryCard key={mealType.id} category={mealType} />
+              ))
+            ) : (
+              mealCategories.map(category => (
+                <CategoryCard key={category.id} category={category} />
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="py-12 sm:py-16 bg-white dark:bg-charcoal-900" aria-labelledby="quick-heading">
+        <div className="container-custom">
+          <div className="text-center mb-12">
+            <h2 id="quick-heading" className="section-title">Quick Recipes</h2>
+            <p className="section-subtitle">Ready when you are</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            {quickTimeOptions.map(option => (
+              <Link
+                key={option.id}
+                to={`/explore?maxTime=${option.maxTime}`}
+                className="card-interactive p-6 text-center group"
+              >
+                <span className="text-4xl mb-3 block group-hover:scale-110 transition-transform duration-300" aria-hidden="true">
+                  {option.icon}
+                </span>
+                <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors">
+                  {option.label}
+                </h3>
+              </Link>
+            ))}
+          </div>
+          <div className="text-center">
+            <Link to="/explore?sort=time-asc">
+              <Button variant="outline" rightIcon={<ArrowRight className="h-4 w-4" />}>
+                View All Quick Recipes
+              </Button>
+            </Link>
           </div>
         </div>
       </section>
