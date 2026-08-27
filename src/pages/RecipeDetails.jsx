@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles, Check, X, RotateCcw, Loader2 } from 'lucide-react';
+import { Heart, Share2, Clock, ChefHat, Users, AlertCircle, ArrowLeft, Sparkles, Check, X, RotateCcw } from 'lucide-react';
 import { useRecipe } from '../hooks/useRecipes';
 import { useKitchen } from '../hooks/useKitchen';
 import { useRecipeMatch } from '../hooks/useKitchenRecipes';
 import { useRecipeAdaptation } from '../hooks/useRecipeAdaptation';
-import { recipeService } from '../services/recipeService';
+import { substitutionService } from '../services/substitutionService';
 import { formatTime, formatIngredient } from '../utils/recipeUtils';
 import Button from '../components/Button';
 import RecipeDetailSkeleton from '../components/RecipeDetailSkeleton';
@@ -50,7 +50,7 @@ export default function RecipeDetails() {
           text: recipe.description,
           url: window.location.href
         });
-      } catch (e) {
+      } catch {
         console.log('Share cancelled');
       }
     } else {
@@ -64,6 +64,14 @@ export default function RecipeDetails() {
       setServings(newServings);
     }
   };
+
+  // Scale adapted recipe when servings change
+  useEffect(() => {
+    if (adaptedState && adaptedState.servings !== servings) {
+      const scaled = substitutionService.scaleAdaptedRecipe(adaptedState, servings);
+      saveAdaptation(scaled);
+    }
+  }, [servings, adaptedState, saveAdaptation]);
 
   const handleAdaptComplete = (adaptedState) => {
     saveAdaptation(adaptedState);

@@ -1,6 +1,6 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, Search, Utensils, MapPin } from 'lucide-react';
+import { ChevronRight, Search, Utensils } from 'lucide-react';
 
 export default function SearchSuggestions({
   suggestions,
@@ -8,16 +8,41 @@ export default function SearchSuggestions({
   onClose,
   highlightedIndex,
   setHighlightedIndex,
-  inputRef,
 }) {
   const containerRef = useRef(null);
   const { recipes = [], ingredients = [], cuisines = [] } = suggestions || {};
 
   const hasSuggestions = recipes.length > 0 || ingredients.length > 0 || cuisines.length > 0;
 
-  if (!hasSuggestions) return null;
-
   const totalItems = recipes.length + ingredients.length + cuisines.length;
+
+  const handleSelection = useCallback((index) => {
+    let itemIndex = 0;
+    
+    for (const recipe of recipes) {
+      if (itemIndex === index) {
+        onSelect?.({ type: 'recipe', data: recipe });
+        return;
+      }
+      itemIndex++;
+    }
+    
+    for (const ingredient of ingredients) {
+      if (itemIndex === index) {
+        onSelect?.({ type: 'ingredient', data: ingredient });
+        return;
+      }
+      itemIndex++;
+    }
+    
+    for (const cuisine of cuisines) {
+      if (itemIndex === index) {
+        onSelect?.({ type: 'cuisine', data: cuisine });
+        return;
+      }
+      itemIndex++;
+    }
+  }, [recipes, ingredients, cuisines, onSelect]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -46,67 +71,9 @@ export default function SearchSuggestions({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [totalItems, highlightedIndex, setHighlightedIndex, onClose]);
+  }, [totalItems, highlightedIndex, setHighlightedIndex, onClose, handleSelection]);
 
-  const handleSelection = (index) => {
-    let itemIndex = 0;
-    
-    for (const recipe of recipes) {
-      if (itemIndex === index) {
-        onSelect?.({ type: 'recipe', data: recipe });
-        return;
-      }
-      itemIndex++;
-    }
-    
-    for (const ingredient of ingredients) {
-      if (itemIndex === index) {
-        onSelect?.({ type: 'ingredient', data: ingredient });
-        return;
-      }
-      itemIndex++;
-    }
-    
-    for (const cuisine of cuisines) {
-      if (itemIndex === index) {
-        onSelect?.({ type: 'cuisine', data: cuisine });
-        return;
-      }
-      itemIndex++;
-    }
-  };
-
-  const renderItem = (item, index, icon, iconColor, navigateUrl) => {
-    const isHighlighted = highlightedIndex === index;
-    return (
-      <button
-        key={`${item.type}-${item.id || index}`}
-        type="button"
-        onClick={() => handleSelection(index)}
-        onMouseEnter={() => setHighlightedIndex(index)}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors text-left ${
-          isHighlighted ? 'bg-primary-50 dark:bg-primary-900/30' : 'hover:bg-warm-50 dark:hover:bg-charcoal-800'
-        }`}
-        role="option"
-        aria-selected={isHighlighted}
-      >
-        <span className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${iconColor}`}>
-          {icon}
-        </span>
-        <div className="flex-1 min-w-0">
-          <span className="font-medium text-charcoal-900 dark:text-warm-100 truncate block">
-            {item.name || item.title}
-          </span>
-          {item.cuisine && (
-            <span className="text-xs text-charcoal-500 dark:text-charcoal-400">
-              {item.cuisine.icon} {item.cuisine.name}
-            </span>
-          )}
-        </div>
-        <ChevronRight className="h-5 w-5 text-charcoal-400 dark:text-charcoal-500 flex-shrink-0" />
-      </button>
-    );
-  };
+  if (!hasSuggestions) return null;
 
   let flatIndex = 0;
 

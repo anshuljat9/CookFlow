@@ -40,7 +40,7 @@ export default function AdaptRecipeModal({
       );
       
       const validatedResults = results.map(result => {
-        const { valid, invalid, allWarnings } = validateAllSubstitutions(result.options, kitchenIngredientNames);
+        const { valid, invalid } = validateAllSubstitutions(result.options, kitchenIngredientNames);
         
         if (invalid.length > 0) {
           console.warn('Invalid substitutions filtered out:', invalid);
@@ -200,7 +200,6 @@ export default function AdaptRecipeModal({
 
   if (!isOpen) return null;
 
-  const totalMissing = missingIngredients.length;
   const substitutedCount = Object.keys(selectedOptions).length;
   const allHaveOptions = substitutionResults.length === missingIngredients.filter(m => !m.isOptional).length;
 

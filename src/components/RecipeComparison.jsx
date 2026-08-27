@@ -9,7 +9,7 @@ export default function RecipeComparison({
   originalRecipe, 
   adaptedRecipe, 
   onReset, 
-  onStartCooking 
+  _onStartCooking 
 }) {
   const [view, setView] = useState('adapted');
 

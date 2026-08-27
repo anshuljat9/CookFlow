@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { substitutionService } from '../services/substitutionService';
 
-const ADAPTED_RECIPE_KEY_PREFIX = 'cookflow_adapted_recipe_';
-
 export function useRecipeAdaptation(recipeId) {
   const [adaptedState, setAdaptedState] = useState(null);
   const [isLoading, setIsLoading] = useState(false);

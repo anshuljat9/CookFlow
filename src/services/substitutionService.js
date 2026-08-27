@@ -5,8 +5,66 @@ const AI_EDGE_FUNCTION_URL = '/functions/v1/ai-substitution';
 const SUBSTITUTION_CACHE_KEY = 'cookflow_substitution_cache';
 const ADAPTED_RECIPE_KEY_PREFIX = 'cookflow_adapted_recipe_';
 
+const ROLE_CACHE_KEY = 'cookflow_ingredient_roles_cache';
+
 function getCacheKey(recipeId, missingIngredientId, kitchenIngredientIds, servings) {
   return `${recipeId}-${missingIngredientId}-${kitchenIngredientIds.sort().join(',')}-${servings}`;
+}
+
+async function fetchIngredientRoles(ingredientIds) {
+  try {
+    const cached = getRolesFromCache(ingredientIds);
+    const uncachedIds = ingredientIds.filter(id => !cached[id]);
+    
+    if (uncachedIds.length > 0) {
+      const { data, error } = await supabase
+        .from('ingredients')
+        .select('id, role')
+        .in('id', uncachedIds);
+      
+      if (!error && data) {
+        data.forEach(ing => {
+          if (ing.role) {
+            cached[ing.id] = ing.role;
+          }
+        });
+        setRolesCache(cached);
+      }
+    }
+    
+    return cached;
+  } catch (error) {
+    console.error('Failed to fetch ingredient roles:', error);
+    return {};
+  }
+}
+
+function getRolesFromCache(ingredientIds) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(ROLE_CACHE_KEY) || '{}');
+    const result = {};
+    ingredientIds.forEach(id => {
+      if (cache[id]) result[id] = cache[id];
+    });
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function setRolesCache(roles) {
+  try {
+    localStorage.setItem(ROLE_CACHE_KEY, JSON.stringify(roles));
+  } catch {
+    // Ignore
+  }
+}
+
+function enrichKitchenIngredientsWithRoles(kitchenIngredients) {
+  return kitchenIngredients.map(ing => ({
+    ...ing,
+    role: ing.role || 'other',
+  }));
 }
 
 function getFromCache(key) {
@@ -98,6 +156,9 @@ async function fetchAISubstitutions(
   servings,
   originalServings
 ) {
+  // Enrich kitchen ingredients with roles
+  const enrichedKitchenIngredients = await enrichKitchenIngredientsWithRoles(kitchenIngredients);
+  
   try {
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}${AI_EDGE_FUNCTION_URL}`, {
       method: 'POST',
@@ -122,7 +183,7 @@ async function fetchAISubstitutions(
           cookingMethod: inferCookingMethod(recipe),
           description: recipe.description,
         },
-        availableIngredients: kitchenIngredients.map(ing => ({
+        availableIngredients: enrichedKitchenIngredients.map(ing => ({
           id: ing.id,
           name: ing.name,
           quantity: 1,
@@ -217,6 +278,16 @@ export const substitutionService = {
       return cached;
     }
 
+    // Enrich missing ingredient with role if not present
+    let enrichedMissingIngredient = missingIngredient;
+    if (!missingIngredient.role) {
+      const roles = await fetchIngredientRoles([missingIngredient.ingredientId]);
+      enrichedMissingIngredient = {
+        ...missingIngredient,
+        role: roles[missingIngredient.ingredientId] || 'other',
+      };
+    }
+
     // 1. Try database substitutions first (rule-based, fast, reliable)
     const recipeContext = {
       cuisine: recipe.cuisine?.name || recipe.cuisine,
@@ -225,7 +296,7 @@ export const substitutionService = {
     };
 
     const dbSubstitutions = await fetchDatabaseSubstitutions(
-      missingIngredient.ingredientId,
+      enrichedMissingIngredient.ingredientId,
       kitchenIngredientIds,
       recipeContext
     );
@@ -242,7 +313,7 @@ export const substitutionService = {
 
     // 2. If no high-confidence DB results, try AI
     const aiSubstitutions = await fetchAISubstitutions(
-      missingIngredient,
+      enrichedMissingIngredient,
       recipe,
       kitchenIngredients,
       servings,
@@ -336,6 +407,45 @@ export const substitutionService = {
         quantity: Math.round(ing.quantity * scaleFactor * 100) / 100,
       })),
     }));
+  },
+
+  scaleAdaptedRecipe(adaptedState, newServings) {
+    if (!adaptedState || !adaptedState.servings || adaptedState.servings === newServings) {
+      return adaptedState;
+    }
+    
+    const scaleFactor = newServings / adaptedState.servings;
+    
+    const scaledAdaptedIngredients = adaptedState.adaptedIngredients.map(ing => {
+      if (ing.isSubstituted && ing.substitutedWith) {
+        return {
+          ...ing,
+          substitutedWith: ing.substitutedWith.map(s => ({
+            ...s,
+            quantity: Math.round(s.quantity * scaleFactor * 100) / 100,
+          })),
+          originalIngredient: ing.originalIngredient ? {
+            ...ing.originalIngredient,
+            quantity: Math.round(ing.originalIngredient.quantity * scaleFactor * 100) / 100,
+          } : undefined,
+        };
+      }
+      return {
+        ...ing,
+        quantity: Math.round(ing.quantity * scaleFactor * 100) / 100,
+        originalIngredient: ing.originalIngredient ? {
+          ...ing.originalIngredient,
+          quantity: Math.round(ing.originalIngredient.quantity * scaleFactor * 100) / 100,
+        } : undefined,
+      };
+    });
+    
+    return {
+      ...adaptedState,
+      servings: newServings,
+      adaptedIngredients: scaledAdaptedIngredients,
+      updatedAt: new Date().toISOString(),
+    };
   },
 };
 

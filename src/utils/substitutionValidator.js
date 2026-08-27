@@ -1,13 +1,3 @@
-const REQUIRED_FIELDS = [
-  'ingredients',
-  'confidence',
-  'confidenceScore',
-  'reason',
-  'tasteImpact',
-  'textureImpact',
-  'warnings',
-];
-
 const VALID_CONFIDENCES = ['high', 'medium', 'low'];
 
 export function validateSubstitutionOption(option, availableIngredientNames) {
