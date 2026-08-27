@@ -1,91 +1,210 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Film, Image, Upload, Loader2, CheckCircle2, AlertCircle, Circle, Sparkles, ArrowRight, X } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Film, Image, Upload, Loader2, CheckCircle2, AlertCircle, Circle, Sparkles, ArrowRight, X, RotateCcw, ChevronRight, ExternalLink } from 'lucide-react';
 import Button from '../components/Button';
 import EmptyState from '../components/EmptyState';
+import VideoUpload from '../components/VideoUpload';
+import AnalysisProgress from '../components/AnalysisProgress';
+import RecipePreview from '../components/RecipePreview';
+import ExtractionError from '../components/ExtractionError';
+import { aiRecipeExtractionService } from '../services/aiRecipeExtractionService';
+import { detectVideoPlatform, validateVideoUrl, isDirectVideoUrl } from '../utils/videoPlatformDetector';
 
 const importSteps = [
-  { id: 'finding', label: 'Finding the dish', icon: Sparkles },
-  { id: 'reading', label: 'Reading ingredients', icon: Film },
-  { id: 'understanding', label: 'Understanding cooking steps', icon: Image },
-  { id: 'creating', label: 'Creating recipe', icon: Upload },
+  { id: 'fetching', label: 'Fetching video data', icon: <Sparkles className="h-5 w-5" /> },
+  { id: 'extracting_audio', label: 'Extracting audio transcript', icon: <Film className="h-5 w-5" /> },
+  { id: 'extracting_frames', label: 'Analyzing video frames', icon: <Image className="h-5 w-5" /> },
+  { id: 'analyzing', label: 'AI recipe analysis', icon: <Sparkles className="h-5 w-5" /> },
+  { id: 'validating', label: 'Validating extraction', icon: <Upload className="h-5 w-5" /> },
 ];
 
-const mockResult = {
-  dish: 'Korean Garlic Noodles',
-  confidence: 87,
-  ingredients: [
-    '200g spaghetti or wheat noodles',
-    '4 tbsp butter',
-    '8 garlic cloves, minced',
-    '2 tbsp soy sauce',
-    '1 tbsp gochugaru (Korean chili flakes)',
-    '1 tbsp honey',
-    '1 tsp sesame oil',
-    'Green onions, chopped',
-    'Sesame seeds',
-    'Optional: fried egg'
-  ],
-  steps: [
-    'Cook noodles al dente, reserve 1/2 cup pasta water',
-    'Melt butter in large pan over medium heat',
-    'Add garlic, cook until golden and fragrant',
-    'Add soy sauce, gochugaru, honey, sesame oil',
-    'Toss in noodles with pasta water to create emulsion',
-    'Top with green onions, sesame seeds, and fried egg'
-  ],
-  prepTime: 5,
-  cookTime: 10,
-  servings: 2,
-  cuisine: 'korean',
-  difficulty: 'easy',
-  tags: ['quick', 'vegetarian']
-};
-
 export default function ImportRecipe() {
+  const navigate = useNavigate();
   const [mode, setMode] = useState('url');
   const [url, setUrl] = useState('');
   const [stage, setStage] = useState('input');
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFileType, setSelectedFileType] = useState<'video' | 'image' | null>(null);
+  const [extractedRecipe, setExtractedRecipe] = useState(null);
+  const [jobId, setJobId] = useState(null);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [currentStageLabel, setCurrentStageLabel] = useState('');
+  const abortControllerRef = useRef(null);
 
-  const handleAnalyze = () => {
+  // Platform detection for URL
+  const platformInfo = detectVideoPlatform(url);
+  const urlValidation = validateVideoUrl(url);
+
+  const handleAnalyzeUrl = useCallback(async () => {
     if (!url.trim()) {
       setError('Please enter a valid URL');
       return;
     }
+
+    const validation = validateVideoUrl(url.trim());
+    if (!validation.valid) {
+      setError(validation.error || 'Invalid URL');
+      return;
+    }
+
+    if (!validation.platformInfo?.supported) {
+      setError(validation.platformInfo?.reason || 'This platform is not supported for URL extraction. Please upload the video directly.');
+      return;
+    }
+
     setError('');
     setStage('analyzing');
     setCurrentStep(0);
-    simulateAnalysis();
-  };
+    setProgressPercent(0);
+    setCurrentStageLabel('Starting analysis...');
 
-  const simulateAnalysis = () => {
-    const steps = importSteps;
-    let stepIndex = 0;
-    
-    const nextStep = () => {
-      if (stepIndex < steps.length) {
-        setCurrentStep(stepIndex);
-        stepIndex++;
-        const delay = stepIndex === steps.length ? 2000 : 1500;
-        setTimeout(nextStep, delay);
+    // Create extraction job
+    const job = aiRecipeExtractionService.createJob({
+      sourceType: 'url',
+      sourceUrl: url.trim(),
+      sourcePlatform: validation.platformInfo?.platform,
+    });
+    setJobId(job.id);
+
+    try {
+      // Process URL extraction
+      const result = await aiRecipeExtractionService.processUrlExtraction(
+        job.id,
+        url.trim(),
+        validation.platformInfo?.platform || 'unknown'
+      );
+
+      if (result) {
+        setExtractedRecipe(result);
+        setStage('result');
       } else {
-        setTimeout(() => setStage('result'), 500);
+        const failedJob = aiRecipeExtractionService.loadJob(job.id);
+        setError(failedJob?.errorMessage || 'Failed to extract recipe from video');
+        setStage('error');
       }
-    };
-    nextStep();
-  };
+    } catch (err) {
+      console.error('URL extraction error:', err);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      setStage('error');
+    }
+  }, [url]);
 
-  const handleRetry = () => {
+  const handleFileSelect = useCallback((file, type) => {
+    setSelectedFile(file);
+    setSelectedFileType(type);
+    setError('');
+  }, []);
+
+  const handleAnalyzeFile = useCallback(async () => {
+    if (!selectedFile || !selectedFileType) {
+      setError('Please select a file first');
+      return;
+    }
+
+    setError('');
+    setStage('analyzing');
+    setCurrentStep(0);
+    setProgressPercent(0);
+    setCurrentStageLabel('Starting analysis...');
+
+    // Create extraction job
+    const job = aiRecipeExtractionService.createJob({
+      sourceType: 'upload',
+      fileName: selectedFile.name,
+      fileSize: selectedFile.size,
+    });
+    setJobId(job.id);
+
+    try {
+      let result = null;
+      
+      if (selectedFileType === 'video') {
+        result = await aiRecipeExtractionService.processVideoUpload(job.id, selectedFile);
+      } else {
+        result = await aiRecipeExtractionService.processImageUpload(job.id, selectedFile);
+      }
+
+      if (result) {
+        setExtractedRecipe(result);
+        setStage('result');
+      } else {
+        const failedJob = aiRecipeExtractionService.loadJob(job.id);
+        setError(failedJob?.errorMessage || 'Failed to extract recipe');
+        setStage('error');
+      }
+    } catch (err) {
+      console.error('File extraction error:', err);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
+      setStage('error');
+    }
+  }, [selectedFile, selectedFileType]);
+
+  const handleRetry = useCallback(() => {
+    setStage('input');
+    setUrl('');
+    setSelectedFile(null);
+    setSelectedFileType(null);
+    setError('');
+    setExtractedRecipe(null);
+    setJobId(null);
+    setProgressPercent(0);
+    setCurrentStageLabel('');
+    setCurrentStep(0);
+  }, []);
+
+  const handleBackToInput = useCallback(() => {
+    handleRetry();
+  }, [handleRetry]);
+
+  const handleUploadInstead = useCallback(() => {
+    setMode('video');
     setStage('input');
     setUrl('');
     setError('');
-  };
+  }, []);
 
-  const handleViewRecipe = () => {
-    console.log('Navigate to recipe details');
-  };
+  const handleSaveRecipe = useCallback(async (updatedData) => {
+    try {
+      const converted = aiRecipeExtractionService.convertToRecipeFormat(updatedData, {
+        sourceType: selectedFile ? 'upload' : 'url',
+        sourceUrl: url || undefined,
+        sourcePlatform: platformInfo.platform !== 'unknown' ? platformInfo.platform : undefined,
+      });
+
+      const recipeId = await aiRecipeExtractionService.saveExtractedRecipe(converted);
+      
+      if (recipeId && jobId) {
+        aiRecipeExtractionService.updateJob(jobId, { 
+          recipeId, 
+          status: 'completed',
+          extractedData: updatedData,
+        });
+      }
+
+      navigate(`/recipe/${recipeId}`);
+    } catch (err) {
+      console.error('Failed to save recipe:', err);
+      setError('Failed to save recipe. Please try again.');
+      setStage('error');
+    }
+  }, [selectedFile, url, platformInfo.platform, jobId, navigate]);
+
+  const handleAnalyzeAgain = useCallback(() => {
+    if (selectedFile) {
+      handleAnalyzeFile();
+    } else if (url) {
+      handleAnalyzeUrl();
+    }
+  }, [selectedFile, url, handleAnalyzeFile, handleAnalyzeUrl]);
+
+  const handleCancel = useCallback(() => {
+    if (jobId) {
+      aiRecipeExtractionService.updateJob(jobId, { status: 'cancelled' });
+    }
+    handleRetry();
+  }, [jobId, handleRetry]);
 
   return (
     <div className="animate-fade-in min-h-[calc(100vh-200px)]">
@@ -97,10 +216,10 @@ export default function ImportRecipe() {
               <span>AI Recipe Extraction</span>
             </div>
             <h1 className="text-3xl sm:text-4xl font-bold text-charcoal-900 dark:text-warm-100 mb-4">
-              Turn any food video into a recipe
+              Turn food videos into recipes
             </h1>
             <p className="text-lg text-charcoal-600 dark:text-charcoal-300 max-w-2xl mx-auto">
-              Paste a recipe video link and let CookFlow do the hard work. Our AI analyzes the video and creates a detailed recipe for you.
+              Paste a supported video link or upload a cooking video/image. CookFlow's AI will analyze it and create a detailed recipe for you.
             </p>
           </header>
 
@@ -110,7 +229,7 @@ export default function ImportRecipe() {
                 <button
                   role="tab"
                   aria-selected={mode === 'url'}
-                  onClick={() => setMode('url')}
+                  onClick={() => { setMode('url'); setError(''); }}
                   className={`flex-1 py-3 px-4 rounded-xl font-medium text-sm transition-colors ${
                     mode === 'url'
                       ? 'bg-primary-600 text-white'
@@ -123,7 +242,7 @@ export default function ImportRecipe() {
                 <button
                   role="tab"
                   aria-selected={mode === 'image'}
-                  onClick={() => setMode('image')}
+                  onClick={() => { setMode('image'); setError(''); }}
                   className={`flex-1 py-3 px-4 rounded-xl font-medium text-sm transition-colors ${
                     mode === 'image'
                       ? 'bg-primary-600 text-white'
@@ -136,13 +255,12 @@ export default function ImportRecipe() {
                 <button
                   role="tab"
                   aria-selected={mode === 'video'}
-                  onClick={() => setMode('video')}
+                  onClick={() => { setMode('video'); setError(''); }}
                   className={`flex-1 py-3 px-4 rounded-xl font-medium text-sm transition-colors ${
                     mode === 'video'
                       ? 'bg-primary-600 text-white'
                       : 'text-charcoal-600 hover:bg-warm-100 dark:text-warm-300 dark:hover:bg-charcoal-800'
                   }`}
-                  disabled
                 >
                   <Upload className="h-4 w-4 mr-2 inline" />
                   Upload Video
@@ -151,15 +269,16 @@ export default function ImportRecipe() {
 
               {mode === 'url' && (
                 <div>
-                  <label htmlFor="video-url" className="label">Paste Instagram, YouTube or Recipe Video URL</label>
+                  <label htmlFor="video-url" className="label">Paste YouTube or Direct Video URL</label>
                   <div className="relative">
                     <input
                       id="video-url"
                       type="url"
                       value={url}
                       onChange={(e) => { setUrl(e.target.value); setError(''); }}
-                      placeholder="https://www.instagram.com/reel/... or https://youtube.com/watch?v=..."
+                      placeholder="https://youtube.com/watch?v=... or https://example.com/video.mp4"
                       className="input pr-12"
+                      disabled={stage === 'analyzing'}
                     />
                     {url && (
                       <button
@@ -171,21 +290,48 @@ export default function ImportRecipe() {
                       </button>
                     )}
                   </div>
+                  
+                  {/* Platform detection feedback */}
+                  {url && (
+                    <div className="mt-3 p-3 rounded-xl text-sm">
+                      {urlValidation.valid ? (
+                        <div className="flex items-center gap-2 text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 p-2 rounded-lg">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>Supported: {validation.platformInfo?.platform ? platformInfo.platform.charAt(0).toUpperCase() + platformInfo.platform.slice(1) : 'Direct video'}</span>
+                        </div>
+                      ) : urlValidation.platformInfo && !urlValidation.valid ? (
+                        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg">
+                          <AlertCircle className="h-4 w-4" />
+                          <span>{urlValidation.error}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 p-2 rounded-lg">
+                          <AlertCircle className="h-4 w-4" />
+                          <span>Invalid URL format</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {error && (
                     <p className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
                       <AlertCircle className="h-4 w-4" />
                       {error}
                     </p>
                   )}
+
                   <p className="mt-3 text-sm text-charcoal-500 dark:text-charcoal-400">
-                    Supported: Instagram Reels, YouTube Shorts, TikTok, Facebook Reels
+                    Currently supported: YouTube (public videos), Direct video files (.mp4, .webm, .mov)
+                    <br />
+                    <span className="text-amber-600 dark:text-amber-400">Note:</span> Instagram, TikTok, Facebook require login - please upload the video file directly instead.
                   </p>
+
                   <Button 
                     className="w-full mt-6" 
                     size="lg" 
                     leftIcon={<Sparkles className="h-5 w-5" />}
-                    onClick={handleAnalyze}
-                    disabled={!url.trim()}
+                    onClick={handleAnalyzeUrl}
+                    disabled={!url.trim() || !urlValidation.valid || stage === 'analyzing'}
                   >
                     Analyze Recipe
                   </Button>
@@ -193,21 +339,30 @@ export default function ImportRecipe() {
               )}
 
               {(mode === 'image' || mode === 'video') && (
-                <div className="text-center py-12">
-                  <div className="w-20 h-20 rounded-2xl bg-warm-100 dark:bg-charcoal-800 flex items-center justify-center mx-auto mb-4">
-                    {mode === 'image' ? <Image className="h-10 w-10 text-charcoal-400" /> : <Upload className="h-10 w-10 text-charcoal-400" />}
-                  </div>
-                  <h3 className="text-lg font-medium text-charcoal-900 dark:text-warm-100 mb-2">
-                    {mode === 'image' ? 'Upload Food Photo' : 'Upload Video File'}
-                  </h3>
-                  <p className="text-charcoal-500 dark:text-charcoal-400 mb-6">
-                    Drag and drop or click to select a file
-                  </p>
-                  <Button variant="outline" leftIcon={<Upload className="h-4 w-4" />}>
-                    Choose File
-                  </Button>
-                  <p className="mt-3 text-xs text-charcoal-400 dark:text-charcoal-500">
-                    {mode === 'image' ? 'JPG, PNG up to 10MB' : 'MP4, MOV up to 100MB'}
+                <div>
+                  <VideoUpload
+                    onFileSelect={handleFileSelect}
+                    disabled={stage === 'analyzing'}
+                    maxVideoSizeMB={100}
+                    maxImageSizeMB={10}
+                  />
+                  
+                  {selectedFile && (
+                    <div className="mt-6">
+                      <Button 
+                        className="w-full" 
+                        size="lg" 
+                        leftIcon={<Sparkles className="h-5 w-5" />}
+                        onClick={handleAnalyzeFile}
+                        disabled={stage === 'analyzing'}
+                      >
+                        {mode === 'video' ? 'Analyze Video' : 'Analyze Image'}
+                      </Button>
+                    </div>
+                  )}
+
+                  <p className="mt-3 text-xs text-charcoal-400 dark:text-charcoal-500 text-center">
+                    {mode === 'image' ? 'JPG, PNG, WebP up to 10MB' : 'MP4, WebM, MOV up to 100MB, max 5 minutes'}
                   </p>
                 </div>
               )}
@@ -215,136 +370,33 @@ export default function ImportRecipe() {
           )}
 
           {stage === 'analyzing' && (
-            <div className="card p-8 animate-slide-up">
-              <div className="text-center mb-8">
-                <div className="w-24 h-24 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center mx-auto mb-6">
-                  <Loader2 className="h-10 w-10 text-primary-600 animate-spin" />
-                </div>
-                <h2 className="text-2xl font-bold text-charcoal-900 dark:text-warm-100 mb-2">Analyzing your video...</h2>
-                <p className="text-charcoal-500 dark:text-charcoal-400">This usually takes 15-30 seconds</p>
-              </div>
-
-              <div className="space-y-4" role="list" aria-label="Analysis progress">
-                {importSteps.map((step, index) => {
-                  let status = 'pending';
-                  if (index < currentStep) status = 'complete';
-                  else if (index === currentStep) status = 'current';
-
-                  return (
-                    <div key={step.id} className="flex items-center gap-4 p-4 rounded-xl transition-colors" role="listitem">
-                      <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
-                        status === 'complete' ? 'bg-green-100 dark:bg-green-900/30' :
-                        status === 'current' ? 'bg-primary-100 dark:bg-primary-900/30 animate-pulse' :
-                        'bg-warm-100 dark:bg-charcoal-800'
-                      }`}>
-                        {status === 'complete' ? (
-                          <CheckCircle2 className="h-5 w-5 text-green-600" />
-                        ) : status === 'current' ? (
-                          <Loader2 className="h-5 w-5 text-primary-600 animate-spin" />
-                        ) : (
-                          <Circle className="h-5 w-5 text-charcoal-300 dark:text-charcoal-600" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <p className={`font-medium ${status === 'current' ? 'text-charcoal-900 dark:text-warm-100' : 'text-charcoal-700 dark:text-warm-200'}`}>
-                          {step.label}
-                        </p>
-                        <p className="text-sm text-charcoal-500 dark:text-charcoal-400">
-                          {status === 'complete' ? 'Completed' : status === 'current' ? 'In progress...' : 'Waiting'}
-                        </p>
-                      </div>
-                      <span className={`text-sm font-medium ${status === 'complete' ? 'text-green-600' : status === 'current' ? 'text-primary-600' : 'text-charcoal-400'}`}>
-                        {status === 'complete' ? '✓' : status === 'current' ? '●' : '○'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <AnalysisProgress
+              currentStage={currentStageLabel}
+              progressPercent={progressPercent}
+              stages={importSteps}
+              onCancel={handleCancel}
+              showCancel={true}
+            />
           )}
 
-          {stage === 'result' && (
-            <div className="space-y-6 animate-slide-up">
-              <div className="card p-6">
-                <div className="flex items-start justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-charcoal-900 dark:text-warm-100 mb-1">{mockResult.dish}</h2>
-                    <div className="flex items-center gap-4 text-sm text-charcoal-500 dark:text-charcoal-400">
-                      <span className="flex items-center gap-1"><Film className="h-3.5 w-3.5" /> Video Recipe</span>
-                      <span className="flex items-center gap-1">⏱ {mockResult.prepTime + mockResult.cookTime}m</span>
-                      <span className="flex items-center gap-1">👥 {mockResult.servings} servings</span>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0 text-center">
-                    <div className="w-16 h-16 rounded-2xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-                      <span className="text-2xl font-bold text-primary-600 dark:text-primary-400">{mockResult.confidence}%</span>
-                    </div>
-                    <p className="text-xs text-charcoal-500 dark:text-charcoal-400 mt-1">Confidence</p>
-                  </div>
-                </div>
+          {stage === 'result' && extractedRecipe && (
+            <RecipePreview
+              data={extractedRecipe}
+              onSave={handleSaveRecipe}
+              onCancel={handleBackToInput}
+              onAnalyzeAgain={handleAnalyzeAgain}
+              isSaving={false}
+            />
+          )}
 
-                <div className="flex flex-wrap gap-2 mb-6">
-                  {mockResult.tags.map(tag => (
-                    <span key={tag} className="px-2 py-1 rounded-full bg-warm-100 text-charcoal-600 text-xs font-medium dark:bg-charcoal-800 dark:text-warm-300">
-                      {tag.charAt(0).toUpperCase() + tag.slice(1)}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 mb-3 flex items-center gap-2">
-                      <Film className="h-4 w-4 text-primary-600" />
-                      Ingredients
-                    </h3>
-                    <ul className="space-y-2" role="list">
-                      {mockResult.ingredients.map((ing, i) => (
-                        <li key={i} className="flex items-center gap-2 p-2 rounded-lg bg-warm-50 dark:bg-charcoal-800 text-sm">
-                          <span className="w-5 h-5 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-xs font-medium text-primary-600 dark:text-primary-400 flex-shrink-0">
-                            {i + 1}
-                          </span>
-                          <span className="text-charcoal-700 dark:text-warm-200">{ing}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div>
-                    <h3 className="font-semibold text-charcoal-900 dark:text-warm-100 mb-3 flex items-center gap-2">
-                      <Upload className="h-4 w-4 text-primary-600" />
-                      Steps
-                    </h3>
-                    <ol className="space-y-2" role="list">
-                      {mockResult.steps.map((step, i) => (
-                        <li key={i} className="flex gap-3 p-2 rounded-lg bg-warm-50 dark:bg-charcoal-800 text-sm">
-                          <span className="w-5 h-5 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-xs font-medium text-primary-600 dark:text-primary-400 flex-shrink-0">
-                            {i + 1}
-                          </span>
-                          <span className="text-charcoal-700 dark:text-warm-200">{step}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-warm-200 dark:border-charcoal-800">
-                  <p className="text-sm text-charcoal-500 dark:text-charcoal-400 mb-3 flex items-center gap-1">
-                    <AlertCircle className="h-4 w-4 text-amber-500" />
-                    AI-generated content. Please verify ingredients and instructions before cooking.
-                  </p>
-                  <div className="flex flex-wrap gap-3">
-                    <Link to={`/cook/1`}>
-                      <Button size="lg" leftIcon={<Sparkles className="h-5 w-5" />} className="flex-1 sm:flex-none">
-                        Start Cooking
-                      </Button>
-                    </Link>
-                    <Button variant="outline" onClick={handleRetry} leftIcon={<ArrowRight className="h-4 w-4" />}>
-                      Import Another
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
+          {stage === 'error' && (
+            <ExtractionError
+              error={error}
+              onRetry={selectedFile ? handleAnalyzeFile : handleAnalyzeUrl}
+              onUploadInstead={handleUploadInstead}
+              onBack={handleBackToInput}
+              isLoading={false}
+            />
           )}
         </div>
       </div>
