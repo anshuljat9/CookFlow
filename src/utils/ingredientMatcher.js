@@ -185,3 +185,14 @@ export function getMatchQualityColor(matchPercentage) {
     default: return 'bg-warm-100 text-charcoal-700 dark:bg-charcoal-800 dark:text-warm-300';
   }
 }
+
+const ingredientMatcher = {
+  calculateRecipeMatch,
+  rankRecipesByMatch,
+  filterRecipesByThreshold,
+  getMatchQuality,
+  getMatchQualityLabel,
+  getMatchQualityColor,
+};
+
+export default ingredientMatcher;

@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Music } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { useRecipe } from '../hooks/useRecipes';
 import { useRecipeAdaptation } from '../hooks/useRecipeAdaptation';
 import { cookingSessionService } from '../services/cookingSessionService';
 import { useCookingSession } from '../hooks/useCookingSession';
+import { preferenceService } from '../services/preferenceService';
 import CookModeHeader from '../components/CookModeHeader';
 import CurrentStep from '../components/CurrentStep';
 import StepNavigation from '../components/StepNavigation';
@@ -15,6 +17,7 @@ import CompletionScreen from '../components/CompletionScreen';
 import ResumeDialog from '../components/ResumeDialog';
 import ViewChangesDialog from '../components/ViewChangesDialog';
 import ExitConfirmDialog from '../components/ExitConfirmDialog';
+import MusicMiniPlayer from '../components/MusicMiniPlayer';
 import Button from '../components/Button';
 
 export default function CookMode() {
@@ -26,6 +29,7 @@ export default function CookMode() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [finalNote, setFinalNote] = useState('');
+  const [showMusic, setShowMusic] = useState(false);
 
   const { 
     session,
@@ -86,6 +90,15 @@ export default function CookMode() {
   useEffect(() => {
     if (recipe) {
       setServings(recipe.servings || 1);
+    }
+  }, [recipe]);
+
+  useEffect(() => {
+    if (recipe && !showMusic) {
+      const prefs = preferenceService.getPreferences();
+      if (prefs.musicPreferences?.mood) {
+        setShowMusic(true);
+      }
     }
   }, [recipe]);
 
@@ -300,6 +313,24 @@ export default function CookMode() {
                 onAddNote={addNote}
                 onDeleteNote={deleteNote}
               />
+
+              <Button
+                variant="outline"
+                size="sm"
+                leftIcon={<Music className="h-4 w-4" />}
+                onClick={() => setShowMusic(!showMusic)}
+                className="w-full"
+              >
+                {showMusic ? 'Hide Music' : '🎵 Cooking Music'}
+              </Button>
+
+              {showMusic && (
+                <MusicMiniPlayer
+                  recipe={recipe}
+                  isOpen={true}
+                  onClose={() => setShowMusic(false)}
+                />
+              )}
             </div>
           </aside>
         </div>

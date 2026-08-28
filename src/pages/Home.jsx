@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, ChefHat, Zap, Search, Truck, Heart, Sparkles, Clock, Loader2, Utensils, MapPin } from 'lucide-react';
+import { ArrowRight, ChefHat, Zap, Search, Truck, Heart, Sparkles, Clock, Loader2, Utensils, MapPin, Zap as ZapIcon, Leaf, RotateCcw, Music, Brain, Flame, Truck as TruckIcon, Clock as ClockIcon, Heart as HeartIcon, Sparkles as SparklesIcon } from 'lucide-react';
 import { usePopularRecipes, useQuickRecipes, useTrendingRecipes } from '../hooks/useRecipes';
 import { categoryService } from '../services/categoryService';
+import { recommendationService } from '../services/recommendationService';
+import { preferenceService } from '../services/preferenceService';
+import { cookingSessionService } from '../services/cookingSessionService';
 import { useState, useEffect } from 'react';
 import RecipeCard from '../components/RecipeCard';
 import RecipeCardSkeleton from '../components/RecipeCardSkeleton';
@@ -10,6 +13,7 @@ import SearchBar from '../components/SearchBar';
 import LoadingState from '../components/LoadingState';
 import CuisineCard from '../components/CuisineCard';
 import CategoryCard from '../components/CategoryCard';
+import EmptyState from '../components/EmptyState';
 
 const howItWorks = [
   {
@@ -60,6 +64,21 @@ export default function Home() {
   const { recipes: popularRecipes, loading: popularLoading, error: popularError } = usePopularRecipes(8);
   const { recipes: quickRecipes, loading: quickLoading, error: quickError } = useQuickRecipes(8, 30);
   const { recipes: trendingRecipes, loading: trendingLoading, error: trendingError } = useTrendingRecipes(8);
+  
+  const [personalizedRecipes, setPersonalizedRecipes] = useState([]);
+  const [personalizedLoading, setPersonalizedLoading] = useState(true);
+  const [personalizedError, setPersonalizedError] = useState(null);
+  const [personalizedReason, setPersonalizedReason] = useState('');
+  
+  const [cookAgainRecipes, setCookAgainRecipes] = useState([]);
+  const [cookAgainLoading, setCookAgainLoading] = useState(true);
+  const [cookAgainError, setCookAgainError] = useState(null);
+  
+  const [recentlyViewedRecipes, setRecentlyViewedRecipes] = useState([]);
+  const [recentlyViewedLoading, setRecentlyViewedLoading] = useState(true);
+  const [recentlyViewedError, setRecentlyViewedError] = useState(null);
+  
+  const [showPersonalized, setShowPersonalized] = useState(false);
 
   useEffect(() => {
     const fetchReferenceData = async () => {
@@ -77,13 +96,62 @@ export default function Home() {
     fetchReferenceData();
   }, []);
 
-  const renderSection = (title, recipes, loading, error, linkText, linkPath, icon) => (
+  useEffect(() => {
+    const loadPersonalized = async () => {
+      setPersonalizedLoading(true);
+      setPersonalizedError(null);
+      try {
+        const result = await recommendationService.getPersonalizedRecipes({ limit: 8 });
+        setPersonalizedRecipes(result.recipes);
+        setPersonalizedReason(result.reason);
+      } catch (err) {
+        setPersonalizedError(err.message);
+      } finally {
+        setPersonalizedLoading(false);
+      }
+    };
+    loadPersonalized();
+  }, []);
+
+  useEffect(() => {
+    const loadCookAgain = async () => {
+      setCookAgainLoading(true);
+      setCookAgainError(null);
+      try {
+        const result = await recommendationService.getCookAgainRecipes(8);
+        setCookAgainRecipes(result.recipes);
+      } catch (err) {
+        setCookAgainError(err.message);
+      } finally {
+        setCookAgainLoading(false);
+      }
+    };
+    loadCookAgain();
+  }, []);
+
+  useEffect(() => {
+    const loadRecentlyViewed = async () => {
+      setRecentlyViewedLoading(true);
+      setRecentlyViewedError(null);
+      try {
+        const result = await recommendationService.getRecentlyViewedRecipes(8);
+        setRecentlyViewedRecipes(result.recipes);
+      } catch (err) {
+        setRecentlyViewedError(err.message);
+      } finally {
+        setRecentlyViewedLoading(false);
+      }
+    };
+    loadRecentlyViewed();
+  }, []);
+
+  const renderSection = (title, recipes, loading, error, linkText, linkPath, icon, reason = null, showReason = false) => (
     <section className="py-12 sm:py-16" aria-labelledby={title.toLowerCase().replace(/\s+/g, '-')}>
       <div className="container-custom">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 id={title.toLowerCase().replace(/\s+/g, '-')} className="section-title">{title}</h2>
-            <p className="section-subtitle">Curated just for you</p>
+            <p className="section-subtitle">{reason || 'Curated just for you'}</p>
           </div>
           <Link to={linkPath} className="hidden sm:flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
             {linkText}
@@ -104,7 +172,7 @@ export default function Home() {
         ) : recipes.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {recipes.map(recipe => (
-              <RecipeCard key={recipe.id} recipe={recipe} />
+              <RecipeCard key={recipe.id} recipe={recipe} showReason={showReason && recipe.recommendationReason} />
             ))}
           </div>
         ) : (
@@ -162,6 +230,14 @@ export default function Home() {
       </div>
     </section>
   );
+
+  const hasPreferences = () => {
+    const prefs = preferenceService.getPreferences();
+    return prefs.favoriteCuisines?.length > 0 || 
+           prefs.dietaryPreferences?.length > 0 || 
+           prefs.favoriteIngredients?.length > 0 ||
+           prefs.cookingSkill !== 'beginner';
+  };
 
   return (
     <div className="animate-fade-in">
@@ -231,14 +307,138 @@ export default function Home() {
                 <h3 className="text-lg font-semibold text-charcoal-900 dark:text-warm-100 mb-2">{feature.title}</h3>
                 <p className="text-sm text-charcoal-500 dark:text-charcoal-400">{feature.description}</p>
               </div>
-))}
-            </div>
+            ))}
+          </div>
         </div>
       </section>
 
-      {renderSection('Popular Recipes', popularRecipes, popularLoading, popularError, 'View all popular', '/explore?sort=popular', Heart)}
-      {renderSection('Quick & Easy', quickRecipes, quickLoading, quickError, 'View all quick', '/explore?maxTime=30', Zap)}
-      {renderSection('Trending Now', trendingRecipes, trendingLoading, trendingError, 'View trending', '/explore?sort=rating', Sparkles)}
+      {hasPreferences() && !showPersonalized && (
+        <section className="py-12 sm:py-16 bg-primary-50 dark:bg-primary-900/20" aria-labelledby="personalized-cta-heading">
+          <div className="container-custom">
+            <div className="card p-6 sm:p-8 max-w-3xl mx-auto text-center bg-primary-600 dark:bg-primary-700 border-0">
+              <div className="w-16 h-16 rounded-2xl bg-primary-500/20 flex items-center justify-center mx-auto mb-4">
+                <Brain className="h-8 w-8 text-white" />
+              </div>
+              <h2 id="personalized-cta-heading" className="text-2xl font-bold text-white mb-3">Get Personalized Recommendations</h2>
+              <p className="text-primary-100 mb-6 max-w-lg mx-auto">
+                Based on your preferences, cooking history, and favorite ingredients, we'll show you recipes tailored just for you.
+              </p>
+              <Button 
+                variant="secondary" 
+                size="lg" 
+                leftIcon={<Sparkles className="h-5 w-5" />}
+                onClick={() => setShowPersonalized(true)}
+                className="w-full sm:w-auto"
+              >
+                Show My Recommendations
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showPersonalized && personalizedLoading && (
+        <section className="py-12 sm:py-16" aria-labelledby="personalized-heading">
+          <div className="container-custom">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 id="personalized-heading" className="section-title">Recommended for You</h2>
+                <p className="section-subtitle">{personalizedReason}</p>
+              </div>
+              <Button variant="ghost" onClick={() => setShowPersonalized(false)} className="sm:hidden">
+                <RotateCcw className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6" aria-busy="true" aria-label="Loading personalized recommendations">
+              {[...Array(4)].map((_, i) => <RecipeCardSkeleton key={i} />)}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {showPersonalized && !personalizedLoading && personalizedRecipes.length > 0 && (
+        <section className="py-12 sm:py-16" aria-labelledby="personalized-heading">
+          <div className="container-custom">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 id="personalized-heading" className="section-title">Recommended for You</h2>
+                <p className="section-subtitle">{personalizedReason}</p>
+              </div>
+              <Button variant="ghost" onClick={() => setShowPersonalized(false)}>
+                <RotateCcw className="h-4 w-4 mr-1" />
+                Back to Home
+              </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {personalizedRecipes.map(recipe => (
+                <RecipeCard key={recipe.id} recipe={recipe} showReason={true} />
+              ))}
+            </div>
+            <div className="text-center mt-6">
+              <Link to="/explore">
+                <Button variant="outline" rightIcon={<ArrowRight className="h-4 w-4" />}>
+                  View More Recommendations
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {cookAgainRecipes.length > 0 && (
+        <section className="py-12 sm:py-16 bg-white dark:bg-charcoal-900" aria-labelledby="cook-again-heading">
+          <div className="container-custom">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 id="cook-again-heading" className="section-title flex items-center gap-2">
+                  <RotateCcw className="h-6 w-6 text-primary-600" />
+                  Cook Again
+                </h2>
+                <p className="section-subtitle">Your recently cooked recipes</p>
+              </div>
+              <Link to="/profile?tab=history" className="hidden sm:flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
+                View History
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {cookAgainRecipes.map(recipe => (
+                <RecipeCard key={recipe.id} recipe={recipe} />
+              ))}
+            </div>
+            <Link to="/profile?tab=history" className="sm:hidden mt-6 inline-flex items-center gap-2 text-primary-600 dark:text-primary-400 font-medium hover:underline">
+              View All History
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {recentlyViewedRecipes.length > 0 && (
+        <section className="py-12 sm:py-16" aria-labelledby="recently-viewed-heading">
+          <div className="container-custom">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <h2 id="recently-viewed-heading" className="section-title flex items-center gap-2">
+                  <ClockIcon className="h-6 w-6 text-primary-600" />
+                  Recently Viewed
+                </h2>
+                <p className="section-subtitle">Pick up where you left off</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              {recentlyViewedRecipes.map(recipe => (
+                <RecipeCard key={recipe.id} recipe={recipe} />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {renderSection('Popular Recipes', popularRecipes, popularLoading, popularError, 'View all popular', '/explore?sort=popular', HeartIcon)}
+      {renderSection('Quick & Easy', quickRecipes, quickLoading, quickError, 'View all quick', '/explore?maxTime=30', ZapIcon)}
+      {renderSection('Trending Now', trendingRecipes, trendingLoading, trendingError, 'View trending', '/explore?sort=rating', SparklesIcon)}
 
       <section className="py-12 sm:py-16 bg-warm-50 dark:bg-charcoal-900" aria-labelledby="cuisines-heading">
         <div className="container-custom">
