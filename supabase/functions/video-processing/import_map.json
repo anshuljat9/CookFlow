@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "supabase": "https://esm.sh/@supabase/supabase-js@2",
+    "openai": "https://esm.sh/openai@4",
+    "youtube-transcript": "https://esm.sh/youtube-transcript@1",
+    "mux.js": "https://esm.sh/mux.js@7"
+  }
+}

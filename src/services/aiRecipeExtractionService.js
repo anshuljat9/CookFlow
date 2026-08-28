@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supabase';
 
-const AI_EDGE_FUNCTION_URL = '/functions/v1/ai-recipe-extraction';
+const VIDEO_PROCESSING_FUNCTION_URL = '/functions/v1/video-processing';
 
 const EXTRACTION_JOB_KEY = 'cookflow_extraction_job_';
 const EXTRACTION_HISTORY_KEY = 'cookflow_extraction_history';
@@ -8,6 +8,9 @@ const EXTRACTION_HISTORY_KEY = 'cookflow_extraction_history';
 const MAX_VIDEO_SIZE_MB = 100;
 const MAX_VIDEO_DURATION_SECONDS = 300;
 const MAX_IMAGE_SIZE_MB = 10;
+
+const POLL_INTERVAL_MS = 2000;
+const MAX_POLL_ATTEMPTS = 150; // 5 minutes max
 
 function getJobKey(jobId) {
   return `${EXTRACTION_JOB_KEY}${jobId}`;
@@ -158,59 +161,137 @@ export const aiRecipeExtractionService = {
     });
   },
 
-  // Process URL-based extraction
-  async processUrlExtraction(jobId, url, platform) {
-    this.updateJob(jobId, { 
-      status: 'processing', 
-      currentStage: 'Fetching video metadata...',
-      progressPercent: 10 
-    });
+  // Upload file to Supabase Storage
+  async uploadFile(file, folder = 'video-uploads') {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${crypto.randomUUID()}.${fileExt}`;
+    const filePath = `${folder}/${fileName}`;
 
-    // For now, we'll simulate the evidence extraction
-    // In a real implementation, this would call backend services to:
-    // 1. Fetch video metadata/caption
-    // 2. Extract transcript (if available via API)
-    // 3. Extract frames
-    // 4. Run OCR on frames
-    // 5. Call AI extraction
-
-    // Simulate stages
-    await this.simulateProgress(jobId, [
-      { stage: 'extracting_audio', label: 'Extracting audio transcript...', progress: 30 },
-      { stage: 'extracting_frames', label: 'Analyzing video frames...', progress: 50 },
-      { stage: 'analyzing', label: 'AI recipe analysis...', progress: 70 },
-      { stage: 'validating', label: 'Validating extraction...', progress: 90 },
-    ]);
-
-    // Call the AI extraction edge function with mock evidence
-    // In production, this would use real extracted evidence
-    const mockEvidence = this.generateMockEvidence(url, platform);
-    
-    const result = await this.callExtractionAI(jobId, mockEvidence);
-    
-    if (result) {
-      this.updateJob(jobId, { 
-        status: 'completed', 
-        currentStage: 'Complete',
-        progressPercent: 100,
-        extractedData: result,
-        updatedAt: new Date().toISOString(),
+    const { data, error } = await supabase.storage
+      .from('video-uploads')
+      .upload(filePath, file, {
+        cacheControl: '3600',
+        upsert: false,
       });
-      return result;
+
+    if (error) {
+      throw new Error(`Upload failed: ${error.message}`);
     }
 
-    return null;
+    return data.path;
+  },
+
+  // Poll job status from backend
+  async pollJobStatus(jobId, onProgress) {
+    let attempts = 0;
+    
+    while (attempts < MAX_POLL_ATTEMPTS) {
+      const { data: job, error } = await supabase
+        .from('video_extraction_jobs')
+        .select('*')
+        .eq('id', jobId)
+        .single();
+
+      if (error) {
+        console.error('Poll error:', error);
+        // Fall back to localStorage
+        const localJob = this.loadJob(jobId);
+        if (localJob) {
+          onProgress?.(localJob);
+          if (localJob.status === 'completed' || localJob.status === 'failed') {
+            return localJob;
+          }
+        }
+      } else if (job) {
+        // Update localStorage with latest status
+        this.updateJob(jobId, {
+          status: job.status,
+          currentStage: job.current_stage,
+          progressPercent: job.progress_percent,
+          errorMessage: job.error_message,
+          extractedData: job.extracted_data,
+          extractedRecipeId: job.extracted_recipe_id,
+        });
+
+        onProgress?.(job);
+
+        if (job.status === 'completed') {
+          return job;
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error_message || 'Processing failed');
+        }
+        if (job.status === 'cancelled') {
+          throw new Error('Analysis was cancelled');
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+      attempts++;
+    }
+
+    throw new Error('Processing timed out. Please try again.');
+  },
+
+  // Process URL-based extraction
+  async processUrlExtraction(jobId, url, platform) {
+    // Start backend processing
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}${VIDEO_PROCESSING_FUNCTION_URL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        sourceType: 'url',
+        sourceUrl: url,
+        sourcePlatform: platform,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `Processing failed: ${response.status}`);
+    }
+
+    // Poll for completion
+    return new Promise((resolve, reject) => {
+      this.pollJobStatus(jobId, (job) => {
+        // Update progress in UI via localStorage
+        this.updateJob(jobId, {
+          status: job.status,
+          currentStage: job.current_stage,
+          progressPercent: job.progress_percent,
+          errorMessage: job.error_message,
+        });
+      })
+        .then(async (job) => {
+          if (job.extracted_data) {
+            this.updateJob(jobId, {
+              status: 'completed',
+              extractedData: job.extracted_data,
+            });
+            resolve(job.extracted_data);
+          } else if (job.extracted_recipe_id) {
+            // Recipe was saved, fetch it
+            const { data: recipe } = await supabase
+              .from('recipes')
+              .select('*')
+              .eq('id', job.extracted_recipe_id)
+              .single();
+            resolve(recipe);
+          } else {
+            reject(new Error('No extraction result'));
+          }
+        })
+        .catch(reject);
+    });
   },
 
   // Process uploaded video
   async processVideoUpload(jobId, file) {
-    this.updateJob(jobId, { 
-      status: 'processing', 
-      currentStage: 'Processing video upload...',
-      progressPercent: 10 
-    });
-
-    // Get video duration
+    // Validate duration
     const duration = await this.getVideoDuration(file);
     if (duration && duration > MAX_VIDEO_DURATION_SECONDS) {
       this.updateJob(jobId, { 
@@ -223,106 +304,119 @@ export const aiRecipeExtractionService = {
 
     this.updateJob(jobId, { videoDuration: duration });
 
-    // Simulate processing stages
-    await this.simulateProgress(jobId, [
-      { stage: 'extracting_audio', label: 'Extracting audio transcript...', progress: 30 },
-      { stage: 'extracting_frames', label: 'Analyzing video frames...', progress: 50 },
-      { stage: 'analyzing', label: 'AI recipe analysis...', progress: 70 },
-      { stage: 'validating', label: 'Validating extraction...', progress: 90 },
-    ]);
+    // Upload to Supabase Storage
+    const filePath = await this.uploadFile(file);
 
-    // Call AI with mock evidence (replace with real processing in production)
-    const mockEvidence = this.generateMockEvidence(file.name, 'upload', duration);
-    const result = await this.callExtractionAI(jobId, mockEvidence);
-    
-    if (result) {
-      this.updateJob(jobId, { 
-        status: 'completed', 
-        currentStage: 'Complete',
-        progressPercent: 100,
-        extractedData: result,
-        updatedAt: new Date().toISOString(),
-      });
-      return result;
+    // Update job with file path
+    await supabase
+      .from('video_extraction_jobs')
+      .update({ 
+        original_filename: file.name,
+        file_size_bytes: file.size,
+        video_duration_seconds: duration,
+      })
+      .eq('id', jobId);
+
+    // Start backend processing
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}${VIDEO_PROCESSING_FUNCTION_URL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        sourceType: 'upload',
+        filePath,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `Processing failed: ${response.status}`);
     }
 
-    return null;
+    // Poll for completion
+    return new Promise((resolve, reject) => {
+      this.pollJobStatus(jobId, (job) => {
+        this.updateJob(jobId, {
+          status: job.status,
+          currentStage: job.current_stage,
+          progressPercent: job.progress_percent,
+          errorMessage: job.error_message,
+        });
+      })
+        .then((job) => {
+          if (job.extracted_data) {
+            this.updateJob(jobId, {
+              status: 'completed',
+              extractedData: job.extracted_data,
+            });
+            resolve(job.extracted_data);
+          } else {
+            reject(new Error('No extraction result'));
+          }
+        })
+        .catch(reject);
+    });
   },
 
   // Process uploaded image
   async processImageUpload(jobId, file) {
-    this.updateJob(jobId, { 
-      status: 'processing', 
-      currentStage: 'Analyzing image...',
-      progressPercent: 20 
+    // Upload to Supabase Storage
+    const filePath = await this.uploadFile(file);
+
+    // Update job with file path
+    await supabase
+      .from('video_extraction_jobs')
+      .update({ 
+        original_filename: file.name,
+        file_size_bytes: file.size,
+      })
+      .eq('id', jobId);
+
+    // Start backend processing
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}${VIDEO_PROCESSING_FUNCTION_URL}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        jobId,
+        sourceType: 'image',
+        filePath,
+      }),
     });
 
-    // Simulate image analysis
-    await this.simulateProgress(jobId, [
-      { stage: 'analyzing', label: 'AI image analysis...', progress: 60 },
-      { stage: 'validating', label: 'Validating extraction...', progress: 90 },
-    ]);
-
-    const mockEvidence = this.generateMockImageEvidence(file.name);
-    const result = await this.callExtractionAI(jobId, mockEvidence);
-    
-    if (result) {
-      this.updateJob(jobId, { 
-        status: 'completed', 
-        currentStage: 'Complete',
-        progressPercent: 100,
-        extractedData: result,
-        updatedAt: new Date().toISOString(),
-      });
-      return result;
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `Processing failed: ${response.status}`);
     }
 
-    return null;
-  },
-
-  // Call the AI extraction edge function
-  async callExtractionAI(jobId, evidence) {
-    try {
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}${AI_EDGE_FUNCTION_URL}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify({
-          jobId,
-          sourceType: 'upload',
-          ...evidence,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || `AI service error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Check for AI service errors
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      // Validate the response structure
-      if (!this.validateExtractionResponse(data)) {
-        throw new Error('Invalid extraction response structure');
-      }
-
-      return data;
-    } catch (error) {
-      console.error('AI extraction failed:', error);
-      this.updateJob(jobId, { 
-        status: 'failed', 
-        errorMessage: error instanceof Error ? error.message : 'Extraction failed',
-        updatedAt: new Date().toISOString(),
-      });
-      return null;
-    }
+    // Poll for completion
+    return new Promise((resolve, reject) => {
+      this.pollJobStatus(jobId, (job) => {
+        this.updateJob(jobId, {
+          status: job.status,
+          currentStage: job.current_stage,
+          progressPercent: job.progress_percent,
+          errorMessage: job.error_message,
+        });
+      })
+        .then((job) => {
+          if (job.extracted_data) {
+            this.updateJob(jobId, {
+              status: 'completed',
+              extractedData: job.extracted_data,
+            });
+            resolve(job.extracted_data);
+          } else {
+            reject(new Error('No extraction result'));
+          }
+        })
+        .catch(reject);
+    });
   },
 
   // Validate extraction response
@@ -353,64 +447,6 @@ export const aiRecipeExtractionService = {
     }
     
     return true;
-  },
-
-  // Simulate progress updates
-  async simulateProgress(jobId, stages) {
-    for (const { stage, label, progress } of stages) {
-      this.updateJob(jobId, { 
-        status: 'processing', 
-        currentStage: label,
-        progressPercent: progress,
-      });
-      // Realistic delay per stage
-      await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 1000));
-    }
-  },
-
-  // Generate mock evidence for development/testing
-  generateMockEvidence(source, platform, duration) {
-    // This simulates what real video processing would produce
-    // In production, replace with actual transcript/OCR/frame extraction
-    const isKorean = source.toLowerCase().includes('korean') || source.toLowerCase().includes('gochujang');
-    
-    return {
-      transcript: isKorean 
-        ? "First, boil your noodles until al dente. Reserve some pasta water. In a large pan, melt butter over medium heat. Add minced garlic and cook until golden and fragrant. Add soy sauce, gochugaru, honey, and sesame oil. Toss in the cooked noodles with the pasta water to create a nice emulsion. Top with green onions and sesame seeds."
-        : "Start by heating oil in a large pan. Add diced onions and cook until translucent. Add minced garlic and ginger, cook for 30 seconds. Add your protein and cook until browned. Add tomatoes and spices, simmer for 15 minutes. Finish with fresh cilantro and serve with rice.",
-      ocrText: isKorean
-        ? "200g spaghetti\n4 tbsp butter\n8 garlic cloves\n2 tbsp soy sauce\n1 tbsp gochugaru\n1 tbsp honey\n1 tsp sesame oil"
-        : "2 tbsp oil\n1 onion, diced\n3 garlic cloves\n1 inch ginger\n500g chicken\n2 tomatoes\n1 tsp turmeric\n1 tsp cumin\nSalt to taste",
-      frameDescriptions: [
-        "Frame 1: Ingredients laid out on counter - noodles, butter, garlic, soy sauce, gochugaru, honey, sesame oil",
-        "Frame 2: Noodles boiling in large pot of water",
-        "Frame 3: Butter melting in pan, garlic being added",
-        "Frame 4: Sauce ingredients being mixed in pan",
-        "Frame 5: Noodles tossed in sauce with pasta water",
-        "Frame 6: Final dish plated with green onions and sesame seeds garnish"
-      ],
-      caption: isKorean
-        ? "Korean Garlic Noodles 🍜 Quick 15 min recipe! Full recipe in bio #koreanfood #garlicnoodles #easyrecipes"
-        : "Butter Chicken Recipe 🍗 Creamy tomato-based curry served with naan. Full recipe in bio! #indianfood #butterchicken #curry",
-      metadata: {
-        title: isKorean ? "Korean Garlic Noodles - 15 Min Recipe" : "Butter Chicken - Restaurant Style",
-        platform,
-        hashtags: isKorean ? ["koreanfood", "garlicnoodles", "easyrecipes"] : ["indianfood", "butterchicken", "curry"],
-      },
-      videoDurationSeconds: duration || 60,
-    };
-  },
-
-  generateMockImageEvidence(filename) {
-    return {
-      frameDescriptions: [
-        `Food image: ${filename}. A plated dish showing noodles with visible garlic pieces, green onions, and sesame seeds. Sauce appears glossy and coating the noodles.`
-      ],
-      metadata: {
-        filename,
-        analysisType: 'image',
-      },
-    };
   },
 
   // Convert extracted data to recipe format for saving
@@ -450,7 +486,7 @@ export const aiRecipeExtractionService = {
       source_creator: null,
     };
 
-    const ingredients = data.ingredients.map((ing, index) => ({
+    const ingredients = data.ingredients.map(ing => ({
       ingredientId: ing.canonicalName ? undefined : undefined, // Will be resolved during save
       name: ing.name,
       quantity: ing.quantity || 0,
@@ -599,6 +635,7 @@ export const aiRecipeExtractionService = {
         .insert({
           ...convertedData.recipe,
           extraction_status: 'completed',
+          extraction_job_id: convertedData.jobId,
           extraction_confidence_breakdown: convertedData.confidenceBreakdown,
           extraction_evidence: convertedData.evidence,
           extraction_warnings: convertedData.warnings,
@@ -641,6 +678,18 @@ export const aiRecipeExtractionService = {
         .insert(recipeSteps);
 
       if (stepsError) throw stepsError;
+
+      // Update extraction job with recipe ID
+      if (convertedData.jobId) {
+        await supabase
+          .from('video_extraction_jobs')
+          .update({ 
+            extracted_recipe_id: recipe.id,
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+          })
+          .eq('id', convertedData.jobId);
+      }
 
       return recipe.id;
     } catch (error) {

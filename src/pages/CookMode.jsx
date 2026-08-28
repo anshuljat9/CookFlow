@@ -1,118 +1,178 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { 
-  ChevronLeft, ChevronRight, Play, Pause, Check, 
-  Mic, Music, X, Loader2, AlertTriangle, 
-  ChefHat, Clock, Volume2, VolumeX
-} from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import { useRecipe } from '../hooks/useRecipes';
-import { formatTime } from '../utils/recipeUtils';
+import { useRecipeAdaptation } from '../hooks/useRecipeAdaptation';
+import { cookingSessionService } from '../services/cookingSessionService';
+import { useCookingSession } from '../hooks/useCookingSession';
+import CookModeHeader from '../components/CookModeHeader';
+import CurrentStep from '../components/CurrentStep';
+import StepNavigation from '../components/StepNavigation';
+import ActiveTimers from '../components/ActiveTimers';
+import IngredientChecklist from '../components/IngredientChecklist';
+import VoiceAssistant from '../components/VoiceAssistant';
+import CookingNotes from '../components/CookingNotes';
+import CompletionScreen from '../components/CompletionScreen';
+import ResumeDialog from '../components/ResumeDialog';
+import ViewChangesDialog from '../components/ViewChangesDialog';
+import ExitConfirmDialog from '../components/ExitConfirmDialog';
 import Button from '../components/Button';
 
 export default function CookMode() {
   const { id } = useParams();
   const { recipe, loading, error } = useRecipe(id);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const { adaptedState, hasAdaptation, isLoading: adaptationLoading } = useRecipeAdaptation(id);
+  const [servings, setServings] = useState(1);
+  const [showViewChanges, setShowViewChanges] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
-  const [isVoiceActive, setIsVoiceActive] = useState(false);
-  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
-  const [ingredientChecks, setIngredientChecks] = useState({});
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [finalNote, setFinalNote] = useState('');
 
-  const steps = recipe?.recipe_steps || [];
-  const ingredients = recipe?.recipe_ingredients || [];
-  const totalSteps = steps.length;
-  const currentInstruction = steps[currentStep]?.instruction || '';
-  const progress = totalSteps > 0 ? ((currentStep + 1) / totalSteps) * 100 : 0;
+  const { 
+    session,
+    isLoading: sessionLoading,
+    error: sessionError,
+    showResumeDialog,
+    setShowResumeDialog,
+    currentStep,
+    completedSteps,
+    isPaused,
+    isCompleted,
+    nextStep,
+    prevStep,
+    completeStep,
+    uncompleteStep,
+    isStepComplete,
+    pauseSession,
+    resumeSession,
+    completeCooking,
+    addNote,
+    deleteNote,
+    notes,
+    readStep,
+    activeStepTimer,
+    timers,
+    activeTimers,
+    startStepTimer,
+    pauseTimer,
+    resumeTimer,
+    cancelTimer,
+    resetTimer,
+    formatTimerTime,
+    isSpeechSupported,
+    isListening,
+    startListening,
+    stopListening,
+    speak,
+    progress,
+  } = useCookingSession(id, recipe, servings, adaptedState);
+
+  const steps = useMemo(() => {
+    if (hasAdaptation && adaptedState?.adaptedSteps) {
+      return adaptedState.adaptedSteps;
+    }
+    return recipe?.recipe_steps || [];
+  }, [hasAdaptation, adaptedState, recipe]);
+
+  const ingredients = useMemo(() => {
+    if (hasAdaptation && adaptedState?.adaptedIngredients) {
+      return adaptedState.adaptedIngredients;
+    }
+    return recipe?.recipe_ingredients || [];
+  }, [hasAdaptation, adaptedState, recipe]);
+
+  const originalSteps = recipe?.recipe_steps || [];
+  const originalIngredients = recipe?.recipe_ingredients || [];
 
   useEffect(() => {
-    let interval;
-    if (isTimerRunning && timerSeconds > 0) {
-      interval = setInterval(() => {
-        setTimerSeconds(prev => {
-          if (prev <= 1) {
-            setIsTimerRunning(false);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+    if (recipe) {
+      setServings(recipe.servings || 1);
     }
-    return () => clearInterval(interval);
-  }, [isTimerRunning, timerSeconds]);
+  }, [recipe]);
 
-  const handleNextStep = () => {
-    if (currentStep < totalSteps - 1) {
-      setCurrentStep(prev => prev + 1);
-      setTimerSeconds(0);
-      setIsTimerRunning(false);
-    }
-  };
-
-  const handlePrevStep = () => {
-    if (currentStep > 0) {
-      setCurrentStep(prev => prev - 1);
-      setTimerSeconds(0);
-      setIsTimerRunning(false);
-    }
-  };
-
-  const handleTimerStart = (presetSeconds) => {
-    if (presetSeconds) {
-      setTimerSeconds(presetSeconds);
-    }
-    setIsTimerRunning(!isTimerRunning);
-  };
-
-  const handleTimerReset = () => {
-    setTimerSeconds(0);
-    setIsTimerRunning(false);
-  };
-
-  const handleIngredientToggle = (index) => {
-    setIngredientChecks(prev => ({ ...prev, [index]: !prev[index] }));
-  };
-
-  const handleVoiceToggle = () => {
-    setIsVoiceActive(!isVoiceActive);
-    if (isVoiceActive) {
-      console.log('Voice control deactivated');
+  const handleNextStep = useCallback(() => {
+    if (isCompleted) {
+      completeCooking();
     } else {
-      console.log('Voice control activated - listening for commands');
+      completeStep(currentStep);
+      nextStep();
     }
-  };
+  }, [isCompleted, currentStep, completeStep, nextStep, completeCooking]);
 
-  const handleMusicToggle = () => {
-    setIsMusicPlaying(!isMusicPlaying);
-  };
+  const handlePrevStep = useCallback(() => {
+    if (isStepComplete(currentStep - 1)) {
+      uncompleteStep(currentStep - 1);
+    }
+    prevStep();
+  }, [currentStep, isStepComplete, uncompleteStep, prevStep]);
 
-  const handleExit = () => {
+  const handleTimerStart = useCallback((duration) => {
+    if (duration && duration > 0) {
+      startStepTimer(duration);
+    } else {
+      resetTimer(activeStepTimer?.id);
+    }
+  }, [startStepTimer, activeStepTimer, resetTimer]);
+
+  const handleExit = useCallback(() => {
     setShowExitConfirm(true);
-  };
+  }, []);
 
-  const confirmExit = () => {
+  const handlePauseExit = useCallback(() => {
+    pauseSession();
+    setShowExitConfirm(false);
     window.history.back();
-  };
+  }, [pauseSession]);
 
-  if (loading) {
+  const handleExitConfirm = useCallback(() => {
+    cookingSessionService.clearSession(id);
+    setShowExitConfirm(false);
+    window.history.back();
+  }, [id]);
+
+  const handleResume = useCallback(() => {
+    resumeSession();
+    setShowResumeDialog(false);
+  }, [resumeSession, setShowResumeDialog]);
+
+  const handleStartOver = useCallback(() => {
+    cookingSessionService.clearSession(id);
+    setShowResumeDialog(false);
+    if (session) {
+      cookingSessionService.createSession(id, recipe, servings, adaptedState);
+    }
+  }, [id, recipe, servings, adaptedState, session, setShowResumeDialog]);
+
+  const handleComplete = useCallback(() => {
+    completeCooking();
+  }, [completeCooking]);
+
+  const handleAddFinalNote = useCallback(() => {
+    if (finalNote.trim()) {
+      addNote(currentStep, finalNote.trim());
+      setFinalNote('');
+    }
+  }, [currentStep, addNote, finalNote]);
+
+  if (loading || adaptationLoading || sessionLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-charcoal-950">
         <div className="text-center text-white">
-          <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-primary-500" />
-          <p>Loading recipe...</p>
+          <div className="h-12 w-12 animate-spin mx-auto mb-4 border-4 border-primary-500 border-t-transparent rounded-full" />
+          <p>Loading cooking session...</p>
         </div>
       </div>
     );
   }
 
-  if (error || !recipe) {
+  if (error || sessionError || !recipe) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-charcoal-950">
-        <div className="text-center text-white">
-          <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold mb-2">Recipe not found</h2>
-          <p className="text-charcoal-400 mb-6">{error || 'This recipe doesn\'t exist or has been removed.'}</p>
+        <div className="text-center text-white max-w-md mx-auto p-6">
+          <div className="h-12 w-12 text-red-500 mx-auto mb-4">
+            <svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+          </div>
+          <h2 className="text-xl font-bold mb-2">Unable to Start Cooking</h2>
+          <p className="text-charcoal-400 mb-6">{error || sessionError || 'This recipe doesn\'t exist or has been removed.'}</p>
           <Button variant="primary" onClick={() => window.history.back()}>
             Back to Explore
           </Button>
@@ -121,268 +181,159 @@ export default function CookMode() {
     );
   }
 
+  if (isCompleted) {
+    const adaptationsUsed = adaptedState?.adaptedIngredients?.filter(i => i.isSubstituted).length || 0;
+    const totalTimeSpent = session?.completedAt ? session.completedAt - session.startedAt : 0;
+    
+    return (
+      <CompletionScreen
+        recipeTitle={recipe.title}
+        totalSteps={steps.length}
+        completedSteps={completedSteps}
+        isAdapted={hasAdaptation}
+        adaptationsUsed={adaptationsUsed}
+        note={finalNote}
+        onDone={() => window.history.back()}
+        onCookAgain={handleStartOver}
+        onViewRecipe={() => window.location.href = `/recipe/${id}`}
+        onAddNote={handleAddFinalNote}
+        totalTimeSpent={totalTimeSpent}
+      />
+    );
+  }
+
+  const currentStepData = steps[currentStep];
+
   return (
     <div className="min-h-screen bg-charcoal-950 text-white">
-      <div className="fixed top-0 left-0 right-0 z-30 bg-charcoal-950/95 backdrop-blur-sm border-b border-charcoal-800">
-        <div className="container-custom">
-          <div className="flex items-center justify-between h-16">
-            <button
-              onClick={handleExit}
-              className="p-2 rounded-xl text-charcoal-300 hover:text-white hover:bg-charcoal-800 transition-colors"
-              aria-label="Exit cooking mode"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            
-            <div className="flex-1 text-center">
-              <h1 className="text-lg font-semibold truncate px-4">{recipe.title}</h1>
-            </div>
+      <CookModeHeader
+        recipeTitle={recipe.title}
+        currentStep={currentStep}
+        totalSteps={steps.length}
+        progress={progress}
+        isPaused={isPaused}
+        onExit={handleExit}
+        onPause={pauseSession}
+        onResume={resumeSession}
+        paused={isPaused}
+      />
 
-            <div className="flex items-center gap-2">
-              <div className="w-24 h-2 bg-charcoal-800 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-primary-500 transition-all duration-300" 
-                  style={{ width: `${progress}%` }}
-                  role="progressbar"
-                  aria-valuenow={Math.round(progress)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-label="Cooking progress"
-                />
-              </div>
-              <span className="text-sm text-charcoal-400 w-14 text-right">
-                {currentStep + 1} / {totalSteps}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <main className="container-custom pt-20 lg:pt-16 pb-16 lg:pb-24">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-6">
+          <div className="lg:col-span-2 space-y-4 lg:space-y-6">
+            <CurrentStep
+              step={currentStepData}
+              stepNumber={currentStep}
+              totalSteps={steps.length}
+              isComplete={isStepComplete(currentStep)}
+              duration={currentStepData?.duration_seconds}
+              temperature={currentStepData?.temperature}
+              tip={currentStepData?.tip}
+              onTimerStart={handleTimerStart}
+              onReadStep={readStep}
+              isTimerRunning={activeTimers.some(t => t.id === activeStepTimer?.id && t.isRunning && !t.isComplete)}
+              timerDuration={activeStepTimer?.duration || 0}
+              isReading={isSpeaking}
+              formatTime={formatTimerTime}
+            />
 
-      <main className="container-custom pt-20 pb-16">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <section className="card bg-charcoal-900 border-charcoal-800" aria-labelledby="instruction-heading">
-              <div className="p-6 sm:p-8">
-                <h2 id="instruction-heading" className="sr-only">Current Step</h2>
-                <div className="text-center mb-6">
-                  <p className="text-sm text-charcoal-400 uppercase tracking-wider mb-1">Step {currentStep + 1} of {totalSteps}</p>
-                  <p className="text-2xl sm:text-3xl lg:text-4xl font-medium text-white leading-relaxed whitespace-pre-wrap">
-                    {currentInstruction}
-                  </p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-                  <Button 
-                    variant="ghost" 
-                    size="lg"
-                    leftIcon={<ChevronLeft className="h-5 w-5" />}
-                    onClick={handlePrevStep}
-                    disabled={currentStep === 0}
-                    className="w-full sm:w-auto"
-                  >
-                    Previous
-                  </Button>
-
-                  <div className="relative w-full sm:w-auto">
-                    <div className="flex items-center justify-center gap-4 mb-4">
-                      <Button
-                        variant={isTimerRunning ? 'danger' : 'secondary'}
-                        size="lg"
-                        leftIcon={isTimerRunning ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-                        onClick={() => handleTimerStart(30)}
-                        className="w-20"
-                      >
-                        {isTimerRunning ? 'Pause' : '30s'}
-                      </Button>
-                      
-                      <div className="text-center">
-                        <p className="text-4xl sm:text-5xl font-mono font-bold tabular-nums text-white" aria-live="polite">
-                          {formatTime(timerSeconds)}
-                        </p>
-                        <p className="text-xs text-charcoal-400">Timer</p>
-                      </div>
-
-                      <Button
-                        variant="secondary"
-                        size="lg"
-                        leftIcon={<Loader2 className="h-5 w-5" />}
-                        onClick={handleTimerReset}
-                        disabled={timerSeconds === 0 && !isTimerRunning}
-                        className="w-20"
-                      >
-                        Reset
-                      </Button>
-                    </div>
-
-                    <div className="flex justify-center gap-2 flex-wrap">
-                      {[30, 60, 180, 300, 600].map(seconds => (
-                        <button
-                          key={seconds}
-                          onClick={() => handleTimerStart(seconds)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
-                            timerSeconds === seconds && isTimerRunning
-                              ? 'bg-primary-600 text-white'
-                              : 'bg-charcoal-800 text-charcoal-300 hover:bg-charcoal-700'
-                          }`}
-                        >
-                          {formatTime(seconds)}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Button 
-                    variant={currentStep === totalSteps - 1 ? 'primary' : 'secondary'} 
-                    size="lg"
-                    rightIcon={<ChevronRight className="h-5 w-5" />}
-                    onClick={handleNextStep}
-                    className="w-full sm:w-auto"
-                  >
-                    {currentStep === totalSteps - 1 ? 'Finish' : 'Next'}
-                  </Button>
-                </div>
-              </div>
-            </section>
-
-            <section className="card bg-charcoal-900 border-charcoal-800" aria-labelledby="ingredients-heading">
-              <div className="p-6">
-                <h2 id="ingredients-heading" className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <ChefHat className="h-5 w-5 text-primary-500" />
-                  Ingredient Checklist
-                </h2>
-                <ul className="space-y-2" role="list">
-                  {ingredients.length > 0 ? (
-                    ingredients.map((ri, index) => (
-                      <li key={ri.id || index}>
-                        <label className="flex items-center gap-3 p-3 rounded-xl bg-charcoal-800 hover:bg-charcoal-700 cursor-pointer transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={ingredientChecks[index]}
-                            onChange={() => handleIngredientToggle(index)}
-                            className="w-5 h-5 rounded text-primary-600 border-charcoal-600 focus:ring-primary-500 bg-charcoal-700"
-                            aria-label={`Mark ingredient as ready`}
-                          />
-                          <span className={`${ingredientChecks[index] ? 'line-through text-charcoal-500' : 'text-white'} flex-1`}>
-                            {ri.ingredient?.name ? `${ri.quantity} ${ri.unit} ${ri.preparation ? `(${ri.preparation}) ` : ''}${ri.ingredient.name}` : 'Ingredient'}
-                          </span>
-                          {ingredientChecks[index] && (
-                            <Check className="h-5 w-5 text-green-500" />
-                          )}
-                        </label>
-                      </li>
-                    ))
-                  ) : (
-                    <li className="text-charcoal-400 text-center py-8">No ingredients listed</li>
-                  )}
-                </ul>
-              </div>
-            </section>
+            <StepNavigation
+              currentStep={currentStep}
+              totalSteps={steps.length}
+              completedSteps={completedSteps}
+              onPrevious={handlePrevStep}
+              onNext={handleNextStep}
+              onFinish={handleComplete}
+              isLastStep={currentStep === steps.length - 1}
+            />
           </div>
 
-          <aside className="lg:col-span-1 space-y-6">
-            <section className="card bg-charcoal-900 border-charcoal-800 p-6" aria-labelledby="recipe-info-heading">
-              <h2 id="recipe-info-heading" className="font-semibold mb-4">Recipe Info</h2>
-              <dl className="space-y-3 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-charcoal-400">Total Time</dt>
-                  <dd className="font-medium">{recipe.total_time_minutes || recipe.cookingTime || 0}m</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-charcoal-400">Servings</dt>
-                  <dd className="font-medium">{recipe.servings}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-charcoal-400">Difficulty</dt>
-                  <dd className="font-medium capitalize">{recipe.difficulty?.name || recipe.difficulty}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-charcoal-400">Cuisine</dt>
-                  <dd className="font-medium capitalize">{recipe.cuisine?.name || recipe.cuisine}</dd>
-                </div>
-              </dl>
-            </section>
+          <aside className="lg:col-span-1 space-y-4 lg:space-y-6">
+            <div className="sticky top-20 lg:top-24 space-y-4">
+              <ActiveTimers
+                timers={timers}
+                activeTimers={activeTimers}
+                formatTime={formatTimerTime}
+                onPause={pauseTimer}
+                onResume={resumeTimer}
+                onCancel={cancelTimer}
+                onReset={resetTimer}
+                activeStepTimerId={activeStepTimer?.id}
+              />
 
-            <section className="card bg-charcoal-900 border-charcoal-800 p-6" aria-labelledby="voice-heading">
-              <h2 id="voice-heading" className="font-semibold mb-4 flex items-center gap-2">
-                <Mic className="h-5 w-5 text-primary-500" />
-                Voice Control
-              </h2>
-              <Button
-                variant={isVoiceActive ? 'primary' : 'outline'}
-                className="w-full mb-3"
-                leftIcon={<Mic className="h-5 w-5" />}
-                onClick={handleVoiceToggle}
-              >
-                {isVoiceActive ? 'Listening...' : 'Activate Voice Control'}
-              </Button>
-              <p className="text-sm text-charcoal-400">
-                {isVoiceActive 
-                  ? 'Say "next step", "repeat", "timer 2 minutes", "pause"'
-                  : 'Tap to enable hands-free cooking commands'}
-              </p>
-            </section>
+              <IngredientChecklist
+                ingredients={originalIngredients}
+                adaptedIngredients={ingredients}
+                isAdapted={hasAdaptation}
+                servings={servings}
+                originalServings={recipe.servings || 1}
+                checks={Object.fromEntries(
+                  ingredients.map((_, i) => [i, isStepComplete(i)])
+                )}
+                onToggle={(index) => {
+                  if (isStepComplete(index)) {
+                    uncompleteStep(index);
+                  } else {
+                    completeStep(index);
+                  }
+                }}
+                onViewChanges={() => setShowViewChanges(true)}
+              />
 
-            <section className="card bg-charcoal-900 border-charcoal-800 p-6" aria-labelledby="music-heading">
-              <h2 id="music-heading" className="font-semibold mb-4 flex items-center gap-2">
-                <Music className="h-5 w-5 text-primary-500" />
-                Cooking Music
-              </h2>
-              <Button
-                variant={isMusicPlaying ? 'primary' : 'outline'}
-                className="w-full mb-3"
-                leftIcon={isMusicPlaying ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
-                onClick={handleMusicToggle}
-              >
-                {isMusicPlaying ? 'Playing Focus Playlist' : 'Play Cooking Music'}
-              </Button>
-              <p className="text-sm text-charcoal-400">
-                {isMusicPlaying 
-                  ? '🎵 Lo-fi beats for cooking focus'
-                  : 'Curated playlists for your cooking session'}
-              </p>
-            </section>
+              <VoiceAssistant
+                isSupported={isSpeechSupported}
+                isListening={isListening}
+                transcript={''}
+                isSpeaking={isSpeaking}
+                startListening={startListening}
+                stopListening={stopListening}
+                speak={speak}
+                stopSpeaking={stopSpeaking}
+                onCommand={(_cmd) => {}}
+                isEnabled={voiceEnabled}
+                onToggleEnabled={setVoiceEnabled}
+              />
 
-            <section className="card bg-charcoal-900 border-charcoal-800 p-6 bg-amber-900/20 border-amber-800/50" aria-labelledby="tips-heading">
-              <h2 id="tips-heading" className="font-semibold mb-3 flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-                Cooking Tips
-              </h2>
-              <ul className="text-sm text-charcoal-300 space-y-2">
-                <li className="flex gap-2"><span className="text-amber-400">•</span> Prep all ingredients before starting</li>
-                <li className="flex gap-2"><span className="text-amber-400">•</span> Keep a bowl for scraps nearby</li>
-                <li className="flex gap-2"><span className="text-amber-400">•</span> Taste and adjust seasoning as you go</li>
-                <li className="flex gap-2"><span className="text-amber-400">•</span> Clean as you cook for easier cleanup</li>
-              </ul>
-            </section>
+              <CookingNotes
+                notes={notes}
+                currentStep={currentStep}
+                onAddNote={addNote}
+                onDeleteNote={deleteNote}
+              />
+            </div>
           </aside>
         </div>
       </main>
 
-      {showExitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="card bg-charcoal-900 border-charcoal-800 w-full max-w-md p-6">
-            <h2 className="text-xl font-bold mb-2">Exit Cooking Mode?</h2>
-            <p className="text-charcoal-400 mb-6">Your progress will be saved. You can resume from step {currentStep + 1} later.</p>
-            <div className="flex gap-3">
-              <Button variant="secondary" className="flex-1" onClick={() => setShowExitConfirm(false)}>
-                Stay Cooking
-              </Button>
-              <Button variant="outline" className="flex-1" onClick={confirmExit}>
-                Exit
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ResumeDialog
+        isOpen={showResumeDialog}
+        onClose={() => setShowResumeDialog(false)}
+        onResume={handleResume}
+        onStartOver={handleStartOver}
+        currentStep={currentStep}
+        totalSteps={steps.length}
+        recipeTitle={recipe.title}
+        pausedAt={session?.pausedAt}
+      />
 
-      {isVoiceActive && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 animate-slide-up">
-          <div className="flex items-center gap-3 px-6 py-3 rounded-2xl bg-primary-600 text-white shadow-lg">
-            <Loader2 className="h-6 w-6 animate-spin" />
-            <span className="font-medium">Listening... Say a command</span>
-          </div>
-        </div>
-      )}
+      <ViewChangesDialog
+        isOpen={showViewChanges}
+        onClose={() => setShowViewChanges(false)}
+        adaptedIngredients={ingredients}
+        adaptedSteps={steps}
+        originalIngredients={originalIngredients}
+        originalSteps={originalSteps}
+      />
+
+      <ExitConfirmDialog
+        isOpen={showExitConfirm}
+        onClose={() => setShowExitConfirm(false)}
+        onPauseExit={handlePauseExit}
+        onExit={handleExitConfirm}
+        currentStep={currentStep}
+        totalSteps={steps.length}
+        recipeTitle={recipe.title}
+      />
     </div>
   );
 }

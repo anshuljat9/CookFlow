@@ -1,14 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Film, Image, Upload, Loader2, CheckCircle2, AlertCircle, Circle, Sparkles, ArrowRight, X, RotateCcw, ChevronRight, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Film, Image, Upload, Sparkles, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import Button from '../components/Button';
-import EmptyState from '../components/EmptyState';
 import VideoUpload from '../components/VideoUpload';
 import AnalysisProgress from '../components/AnalysisProgress';
 import RecipePreview from '../components/RecipePreview';
 import ExtractionError from '../components/ExtractionError';
 import { aiRecipeExtractionService } from '../services/aiRecipeExtractionService';
-import { detectVideoPlatform, validateVideoUrl, isDirectVideoUrl } from '../utils/videoPlatformDetector';
+import { detectVideoPlatform, validateVideoUrl } from '../utils/videoPlatformDetector';
 
 const importSteps = [
   { id: 'fetching', label: 'Fetching video data', icon: <Sparkles className="h-5 w-5" /> },
@@ -23,19 +22,52 @@ export default function ImportRecipe() {
   const [mode, setMode] = useState('url');
   const [url, setUrl] = useState('');
   const [stage, setStage] = useState('input');
-  const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const [selectedFileType, setSelectedFileType] = useState<'video' | 'image' | null>(null);
+  const [selectedFileType, setSelectedFileType] = useState(null);
   const [extractedRecipe, setExtractedRecipe] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [progressPercent, setProgressPercent] = useState(0);
   const [currentStageLabel, setCurrentStageLabel] = useState('');
-  const abortControllerRef = useRef(null);
+  const isPollingRef = useRef(false);
 
   // Platform detection for URL
   const platformInfo = detectVideoPlatform(url);
   const urlValidation = validateVideoUrl(url);
+
+  // Listen for job updates from localStorage (polled by service)
+  useEffect(() => {
+    if (!jobId || stage !== 'analyzing') return;
+
+    const checkJobStatus = () => {
+      const job = aiRecipeExtractionService.loadJob(jobId);
+      if (job) {
+        setProgressPercent(job.progressPercent || 0);
+        setCurrentStageLabel(job.currentStage || 'Processing...');
+        
+        if (job.status === 'completed' && job.extractedData) {
+          setExtractedRecipe(job.extractedData);
+          setStage('result');
+          isPollingRef.current = false;
+        } else if (job.status === 'failed') {
+          setError(job.errorMessage || 'Failed to extract recipe from video');
+          setStage('error');
+          isPollingRef.current = false;
+        } else if (job.status === 'cancelled') {
+          handleRetry();
+          isPollingRef.current = false;
+        }
+      }
+    };
+
+    // Initial check
+    checkJobStatus();
+
+    // Poll for updates
+    const interval = setInterval(checkJobStatus, 1000);
+    
+    return () => clearInterval(interval);
+  }, [jobId, stage, handleRetry]);
 
   const handleAnalyzeUrl = useCallback(async () => {
     if (!url.trim()) {
@@ -59,6 +91,7 @@ export default function ImportRecipe() {
     setCurrentStep(0);
     setProgressPercent(0);
     setCurrentStageLabel('Starting analysis...');
+    isPollingRef.current = true;
 
     // Create extraction job
     const job = aiRecipeExtractionService.createJob({
@@ -69,7 +102,7 @@ export default function ImportRecipe() {
     setJobId(job.id);
 
     try {
-      // Process URL extraction
+      // Start async processing (service handles polling internally)
       const result = await aiRecipeExtractionService.processUrlExtraction(
         job.id,
         url.trim(),
@@ -88,6 +121,8 @@ export default function ImportRecipe() {
       console.error('URL extraction error:', err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setStage('error');
+    } finally {
+      isPollingRef.current = false;
     }
   }, [url]);
 
@@ -108,6 +143,7 @@ export default function ImportRecipe() {
     setCurrentStep(0);
     setProgressPercent(0);
     setCurrentStageLabel('Starting analysis...');
+    isPollingRef.current = true;
 
     // Create extraction job
     const job = aiRecipeExtractionService.createJob({
@@ -138,6 +174,8 @@ export default function ImportRecipe() {
       console.error('File extraction error:', err);
       setError(err instanceof Error ? err.message : 'An unexpected error occurred');
       setStage('error');
+    } finally {
+      isPollingRef.current = false;
     }
   }, [selectedFile, selectedFileType]);
 
@@ -152,6 +190,7 @@ export default function ImportRecipe() {
     setProgressPercent(0);
     setCurrentStageLabel('');
     setCurrentStep(0);
+    isPollingRef.current = false;
   }, []);
 
   const handleBackToInput = useCallback(() => {
@@ -171,6 +210,7 @@ export default function ImportRecipe() {
         sourceType: selectedFile ? 'upload' : 'url',
         sourceUrl: url || undefined,
         sourcePlatform: platformInfo.platform !== 'unknown' ? platformInfo.platform : undefined,
+        jobId,
       });
 
       const recipeId = await aiRecipeExtractionService.saveExtractedRecipe(converted);
@@ -297,7 +337,7 @@ export default function ImportRecipe() {
                       {urlValidation.valid ? (
                         <div className="flex items-center gap-2 text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 p-2 rounded-lg">
                           <CheckCircle2 className="h-4 w-4" />
-                          <span>Supported: {validation.platformInfo?.platform ? platformInfo.platform.charAt(0).toUpperCase() + platformInfo.platform.slice(1) : 'Direct video'}</span>
+                          <span>Supported: {platformInfo.platform ? platformInfo.platform.charAt(0).toUpperCase() + platformInfo.platform.slice(1) : 'Direct video'}</span>
                         </div>
                       ) : urlValidation.platformInfo && !urlValidation.valid ? (
                         <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 p-2 rounded-lg">
